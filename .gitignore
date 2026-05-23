@@ -1,0 +1,3 @@
+tools/cocoapods-podx/*.gem
+tools/cocoapods-podx/bin/
+.DS_Store

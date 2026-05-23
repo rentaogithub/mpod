@@ -1,0 +1,356 @@
+require 'fileutils'
+
+module CocoapodsPodx
+  module Commands
+    module MgitPublish
+      def publish_git_branches
+        target_branch = @pod_names.first.to_s.strip
+        raise Pod::Informative, '请指定目标分支，例如：mgit publish release/5.14.2' if target_branch.empty?
+
+        extra_args = @pod_names.drop(1)
+        raise Pod::Informative, "mgit publish 只支持一个目标分支，无法识别：#{extra_args.join(' ')}" if extra_args.any?
+
+        publish_config = mgit_publish_config
+        base_branch = @git_publish_base_branch || publish_config[:base_branch] || 'develop'
+        base_branch = base_branch.to_s.strip
+        base_branch = 'develop' if base_branch.empty?
+        raise Pod::Informative, '目标分支不能和基准分支相同' if target_branch == base_branch
+
+        push_mode = @git_publish_push_mode.to_s.strip
+        push_mode = 'normal' if push_mode.empty?
+        unless %w[normal skip set-upstream].include?(push_mode)
+          raise Pod::Informative, 'push-mode 只能是 normal、skip、set-upstream'
+        end
+
+        configured_work_dir = publish_config[:work_dir] || '.mgit-publish'
+        raw_work_dir = @git_publish_work_dir.to_s.strip.empty? ? configured_work_dir : @git_publish_work_dir
+        work_dir = File.expand_path(raw_work_dir, project_directory)
+        repos = mgit_publish_repos
+
+        release_version = mgit_publish_release_version(target_branch)
+        release_build = release_version && mgit_publish_build_number(release_version)
+        mgit_publish_print_table(
+          'mgit publish 配置',
+          [
+            ['目标分支', target_branch],
+            ['基准分支', base_branch],
+            ['工作目录', work_dir],
+            ['推送模式', push_mode],
+            ['版本号', release_version ? "#{release_version} build #{release_build}" : '-'],
+            ['主仓库', mgit_publish_main_repo? ? publish_config[:main_repo] : '-'],
+          ],
+          headers: ['配置', '值']
+        )
+
+        failures = []
+        done_count = 0
+        publish_rows = []
+
+        FileUtils.mkdir_p(work_dir) unless @dry_run
+
+        repos.each do |repo|
+          name = repo[:name]
+          url = repo[:url]
+          repo_dir = File.join(work_dir, name)
+
+          begin
+            if @dry_run
+              changes = []
+              if mgit_publish_main_repo?(name)
+                changes << 'Podfile branch'
+                changes << "version #{release_version}(#{release_build})" if release_version
+              end
+              publish_rows << [
+                name,
+                base_branch,
+                target_branch,
+                changes.empty? ? '-' : changes.join(', '),
+                push_mode == 'skip' ? 'skip' : push_mode,
+                'dry-run',
+              ]
+              done_count += 1
+              next
+            end
+
+            FileUtils.rm_rf(repo_dir) if File.exist?(repo_dir)
+            run_git!(work_dir, 'clone', url, repo_dir)
+
+            run_git!(repo_dir, 'fetch', 'origin', base_branch)
+
+            checkout_branch!(repo_dir, base_branch)
+
+            run_git!(repo_dir, 'checkout', '-B', target_branch, base_branch)
+
+            changed_files = mgit_publish_main_repo?(name) ? mgit_publish_update_main_project(repo_dir, target_branch, release_version, release_build) : []
+
+            case push_mode
+            when 'normal'
+              run_git!(repo_dir, 'push', 'origin', target_branch)
+            when 'set-upstream'
+              run_git!(repo_dir, 'push', '--set-upstream', 'origin', target_branch)
+            when 'skip'
+            end
+
+            publish_rows << [
+              name,
+              base_branch,
+              target_branch,
+              changed_files.empty? ? '-' : changed_files.join(', '),
+              push_mode == 'skip' ? 'skip' : push_mode,
+              'ok',
+            ]
+            done_count += 1
+          rescue => e
+            publish_rows << [name, base_branch, target_branch, '-', push_mode, "failed: #{e.message}"]
+            failures << "#{name}: #{e.message}"
+          end
+        end
+
+        mgit_publish_print_table(
+          @dry_run ? 'mgit publish 预览' : 'mgit publish 仓库',
+          publish_rows,
+          headers: ['仓库', '基准分支', '发布分支', '变更', '推送', '结果']
+        )
+
+        if failures.any?
+          raise Pod::Informative, "mgit publish [failed] #{failures.size}\n#{failures.join("\n")}"
+        end
+
+        checkout_rows = []
+        checkout_rows << mgit_publish_checkout_project_repo(target_branch)
+        checkout_rows.concat(mgit_publish_sync_overlay_repos(target_branch))
+        checkout_rows.compact!
+        mgit_publish_print_table(
+          @dry_run ? '本地仓库切换预览' : '本地仓库切换',
+          checkout_rows,
+          headers: ['仓库', '原分支', '目标分支', '结果']
+        ) if checkout_rows.any?
+
+        Pod::UI.puts @dry_run ? "mgit publish [dry-run] #{done_count}" : "mgit publish [done] #{done_count}"
+      end
+
+      def mgit_publish_sync_overlay_repos(target_branch)
+        return [] unless respond_to?(:load_entries, true) && respond_to?(:update_local_repo, true)
+
+        entries = load_entries
+        return [] if entries.empty?
+
+        rows = []
+        failures = []
+
+        entries.map { |entry| entry[:name] }.uniq.each do |name|
+          begin
+            if @dry_run
+              rows << [name, '-', target_branch, 'dry-run']
+            else
+              updated = update_local_repo(name, dry_run: false, pull: true, expected_branch: target_branch)
+              rows << [name, '-', target_branch, updated ? 'ok' : 'skip']
+            end
+          rescue => e
+            rows << [name, '-', target_branch, "failed: #{e.message}"]
+            failures << "#{name}: #{e.message}"
+          end
+        end
+
+        if failures.any?
+          raise Pod::Informative, "Podfile.overlay 本地组件切换发布分支失败：\n#{failures.join("\n")}"
+        end
+
+        rows
+      end
+
+      def mgit_publish_checkout_project_repo(target_branch)
+        return nil unless respond_to?(:project_directory, true) && git_work_tree?(project_directory)
+
+        name = File.basename(project_directory)
+        from_branch = git_branch_for(project_directory) || 'detached'
+        return [name, from_branch, target_branch, 'skip same'] if from_branch == target_branch
+        return [name, from_branch, target_branch, 'dry-run'] if @dry_run
+        return [name, from_branch, target_branch, 'skip dirty'] if git_dirty?(project_directory)
+
+        run_git!(project_directory, 'fetch', 'origin', target_branch)
+        checkout_branch!(project_directory, target_branch)
+        [name, from_branch, target_branch, 'ok']
+      end
+
+      def mgit_publish_update_main_project(repo_dir, target_branch, release_version, release_build)
+        changed_files = []
+        changed_files << 'Podfile' if mgit_publish_update_podfile_branch_enabled? && mgit_publish_update_podfile_branch(repo_dir, target_branch)
+        project_file = mgit_publish_version_config[:project_file]
+        if mgit_publish_version_update_enabled? && release_version && mgit_publish_update_project_version(repo_dir, release_version, release_build)
+          changed_files << project_file
+        end
+        return [] if changed_files.empty? || !git_dirty?(repo_dir)
+
+        run_git!(repo_dir, 'add', *changed_files)
+        message = "chore: update publish config to #{target_branch}"
+        message += " #{release_version}(#{release_build})" if release_version
+        run_git!(repo_dir, 'commit', '-m', message)
+        changed_files
+      end
+
+      def mgit_publish_print_table(title, rows, headers:)
+        rows = rows.map { |row| row.map { |value| mgit_publish_cell(value) } }
+        headers = headers.map { |value| mgit_publish_cell(value) }
+        widths = headers.each_index.map do |index|
+          ([mgit_publish_display_width(headers[index])] + rows.map { |row| mgit_publish_display_width(row[index]) }).max
+        end
+
+        Pod::UI.puts "【#{title}】"
+        separator = "+#{widths.map { |width| '-' * (width + 2) }.join('+')}+"
+        Pod::UI.puts separator
+        Pod::UI.puts "| #{headers.each_with_index.map { |value, index| mgit_publish_pad_display(value, widths[index]) }.join(' | ')} |"
+        Pod::UI.puts separator
+        rows.each do |row|
+          Pod::UI.puts "| #{row.each_with_index.map { |value, index| mgit_publish_pad_display(value, widths[index]) }.join(' | ')} |"
+        end
+        Pod::UI.puts separator
+      end
+
+      def mgit_publish_cell(value)
+        text = value.to_s
+        text.empty? ? '-' : text.gsub(/\s+/, ' ').strip
+      end
+
+      def mgit_publish_display_width(value)
+        value.to_s.each_char.sum { |char| char.bytesize == 1 ? 1 : 2 }
+      end
+
+      def mgit_publish_pad_display(value, width)
+        text = value.to_s
+        text + (' ' * [width - mgit_publish_display_width(text), 0].max)
+      end
+
+      def mgit_publish_update_podfile_branch(repo_dir, target_branch)
+        podfile = File.join(repo_dir, 'Podfile')
+        return false unless File.exist?(podfile)
+
+        content = File.read(podfile)
+        updated = content.gsub(/((?:branch\s*:|:branch\s*=>)\s*)['"][^'"]*['"]/) { "#{$1}'#{target_branch}'" }
+        return false if updated == content
+
+        File.write(podfile, updated)
+        true
+      end
+
+      def mgit_publish_update_project_version(repo_dir, version, build)
+        project_file = File.join(repo_dir, mgit_publish_version_config[:project_file])
+        return false unless File.exist?(project_file)
+
+        content = File.read(project_file)
+        updated = content.gsub(/MARKETING_VERSION = \d+\.\d+\.\d+;/, "MARKETING_VERSION = #{version};")
+        updated = updated.gsub(/CURRENT_PROJECT_VERSION = \d{6,};/, "CURRENT_PROJECT_VERSION = #{build};") if build
+        return false if updated == content
+
+        File.write(project_file, updated)
+        true
+      end
+
+      def mgit_publish_release_version(branch)
+        pattern_source = mgit_publish_version_config[:branch_pattern].to_s
+        return nil if pattern_source.empty?
+
+        pattern = Regexp.new(pattern_source)
+        match = branch.match(pattern)
+        match && match[1]
+      end
+
+      def mgit_publish_build_number(version)
+        return nil unless mgit_publish_version_config[:build_number_strategy] == 'ios_semver'
+
+        major, minor, patch = version.split('.').map(&:to_i)
+        "#{major}0#{minor.to_s.rjust(2, '0')}#{patch.to_s.rjust(2, '0')}"
+      end
+
+      def mgit_publish_main_repo?(name = nil)
+        main_repo = mgit_publish_config[:main_repo].to_s.strip
+        return false if main_repo.empty?
+        return true if name.nil?
+
+        name.to_s == main_repo
+      end
+
+      def mgit_publish_update_podfile_branch_enabled?
+        mgit_publish_config[:update_podfile_branch] == true
+      end
+
+      def mgit_publish_version_update_enabled?
+        mgit_publish_version_config[:type] == 'ios_xcodeproj' && !mgit_publish_version_config[:project_file].to_s.strip.empty?
+      end
+
+      def mgit_publish_repos
+        base_url = mgit_publish_git_base_url
+        configured_repos = mgit_publish_config[:repos]
+        return configured_repos.map { |repo| mgit_publish_repo_config(repo, base_url) } if configured_repos && configured_repos.any?
+
+        repo_names = %w[
+          nnios
+          nnbusscom
+          nnimmanager
+          nnbascicommon
+          nnapperance
+          nncategory
+          nnlogmodule
+          nnnetwork
+          nnrealreachability
+          nnyytext
+          nngeneral
+          nnswiftscan
+        ]
+
+        repo_names.map { |name| mgit_publish_repo_config(name, base_url) }
+      end
+
+      def mgit_publish_git_base_url
+        config = CocoapodsPodx::Runtime.config
+        config = inferred_project_config if config[:git_base_url].to_s.strip.empty?
+        base_url = config[:git_base_url].to_s.strip
+        target_name = config[:target_name].to_s.strip
+        unless base_url.empty?
+          return base_url if target_name.empty? || base_url.end_with?("/#{target_name}")
+
+          return "#{base_url}/#{target_name}"
+        end
+
+        'http://git.leigod.top/nn_ios'
+      end
+
+      def mgit_publish_config
+        config = CocoapodsPodx::Runtime.config
+        {
+          work_dir: config[:publish_work_dir],
+          base_branch: config[:publish_base_branch],
+          repos: config[:publish_repos],
+          main_repo: config[:publish_main_repo],
+          update_podfile_branch: config[:publish_update_podfile_branch],
+        }
+      end
+
+      def mgit_publish_version_config
+        config = CocoapodsPodx::Runtime.config[:publish_version] || {}
+        {
+          type: config[:type].to_s,
+          branch_pattern: config[:branch_pattern].to_s,
+          project_file: config[:project_file].to_s,
+          build_number_strategy: config[:build_number_strategy].to_s,
+        }
+      end
+
+      def mgit_publish_repo_config(repo, base_url)
+        if repo.is_a?(Hash)
+          name = repo[:name].to_s
+          url = repo[:url].to_s
+          url = default_mgit_publish_repo_url(name, base_url) if url.empty?
+          return { name: name, url: url }
+        end
+
+        name = repo.to_s
+        { name: name, url: default_mgit_publish_repo_url(name, base_url) }
+      end
+
+      def default_mgit_publish_repo_url(name, base_url)
+        name == 'nnios' ? (git_remote_url || "#{base_url}/#{name}.git") : "#{base_url}/#{name}.git"
+      end
+    end
+  end
+end
