@@ -30,8 +30,67 @@ module CocoapodsPodx
           else
             print_jenkins_progress('等待 Jenkins 打包...')
             trigger_jenkins_build_with_auto_fix_retry(params, target[:name])
+            sync_local_overlay_repos_after_publish(branch)
           end
         end
+      end
+
+      def sync_local_overlay_repos_after_publish(jenkins_branch)
+        return unless respond_to?(:load_entries, true) && respond_to?(:update_local_repo, true)
+
+        entries = load_entries
+        return if entries.empty?
+
+        target_branch = jenkins_branch.to_s.sub(%r{\Aorigin/}, '')
+        rows = []
+        failures = []
+
+        entries.map { |entry| entry[:name] }.uniq.each do |name|
+          begin
+            updated = update_local_repo(name, dry_run: false, pull: true, expected_branch: target_branch, quiet: true)
+            rows << [name, target_branch, updated ? '已同步' : '无更新']
+          rescue => e
+            rows << [name, target_branch, "失败：#{e.message}"]
+            failures << "#{name}: #{e.message}"
+          end
+        end
+
+        print_publish_overlay_sync_table(rows)
+        raise Pod::Informative, "发布成功后本地组件切换发布分支失败：\n#{failures.join("\n")}" if failures.any?
+      end
+
+      def print_publish_overlay_sync_table(rows)
+        return if rows.empty?
+
+        headers = %w[仓库 分支 结果]
+        rows = rows.map { |row| row.map { |value| publish_overlay_sync_cell(value) } }
+        widths = headers.each_index.map do |index|
+          ([publish_overlay_sync_display_width(headers[index])] + rows.map { |row| publish_overlay_sync_display_width(row[index]) }).max
+        end
+
+        Pod::UI.puts '【本地组件同步】'
+        separator = "+#{widths.map { |width| '-' * (width + 2) }.join('+')}+"
+        Pod::UI.puts separator
+        Pod::UI.puts "| #{headers.each_with_index.map { |value, index| publish_overlay_sync_pad_display(value, widths[index]) }.join(' | ')} |"
+        Pod::UI.puts separator
+        rows.each do |row|
+          Pod::UI.puts "| #{row.each_with_index.map { |value, index| publish_overlay_sync_pad_display(value, widths[index]) }.join(' | ')} |"
+        end
+        Pod::UI.puts separator
+      end
+
+      def publish_overlay_sync_cell(value)
+        text = value.to_s.gsub(/\s+/, ' ').strip
+        text.empty? ? '-' : text
+      end
+
+      def publish_overlay_sync_display_width(value)
+        value.to_s.each_char.sum { |char| char.bytesize == 1 ? 1 : 2 }
+      end
+
+      def publish_overlay_sync_pad_display(value, width)
+        text = value.to_s
+        text + (' ' * [width - publish_overlay_sync_display_width(text), 0].max)
       end
 
       def show_jenkins_build_log
@@ -836,13 +895,12 @@ module CocoapodsPodx
       end
 
       def jenkins_publish_password_for(target)
-        return "#{@publish_password}," if @publish_password && !@publish_password.end_with?(',')
-
-        return @publish_password unless @publish_password.nil?
         return ',' if target[:value] == 'Pgyer,'
         return '***,' if @dry_run
 
-        password = prompt_jenkins_publish_password(target)
+        password = @publish_password.nil? ? prompt_jenkins_publish_password(target) : @publish_password
+        password = password.to_s.sub(/,+\z/, '')
+        validate_jenkins_publish_password!(target, password)
         "#{password},"
       end
 
@@ -867,6 +925,25 @@ module CocoapodsPodx
         raise Pod::Informative, "#{target[:name]} 打包密码不能为空" if password.strip.empty?
 
         password
+      end
+
+      def validate_jenkins_publish_password!(target, password)
+        password = password.to_s.strip
+        raise Pod::Informative, "#{target[:name]} 打包密码不能为空" if password.empty?
+
+        expected = expected_jenkins_publish_password
+        return if expected.nil? || expected.empty?
+        return if password == expected
+
+        raise Pod::Informative, "#{target[:name]} 打包密码错误，已取消发布。"
+      end
+
+      def expected_jenkins_publish_password
+        ENV['COCOAPODS_PODX_JENKINS_PUBLISH_PASSWORD'] ||
+          ENV['COCOAPODS_PODX_VERIFICATION_PASSWORD'] ||
+          ENV['COCOAPODS_OVERLAY_PUBLISH_PASSWORD'] ||
+          ENV['COCOAPODS_PODX_PUBLISH_PASSWORD'] ||
+          'admin123'
       end
 
       def print_publish_header(jenkins_branch, target)

@@ -118,7 +118,7 @@ module CocoapodsPodx
 
         checkout_rows = []
         checkout_rows << mgit_publish_checkout_project_repo(target_branch)
-        checkout_rows.concat(mgit_publish_sync_overlay_repos(target_branch))
+        checkout_rows.concat(mgit_publish_sync_local_repos(target_branch))
         checkout_rows.compact!
         mgit_publish_print_table(
           @dry_run ? '本地仓库切换预览' : '本地仓库切换',
@@ -130,15 +130,19 @@ module CocoapodsPodx
       end
 
       def mgit_publish_sync_overlay_repos(target_branch)
+        mgit_publish_sync_local_repos(target_branch)
+      end
+
+      def mgit_publish_sync_local_repos(target_branch)
         return [] unless respond_to?(:load_entries, true) && respond_to?(:update_local_repo, true)
 
-        entries = load_entries
-        return [] if entries.empty?
+        names = mgit_publish_local_repo_names
+        return [] if names.empty?
 
         rows = []
         failures = []
 
-        entries.map { |entry| entry[:name] }.uniq.each do |name|
+        names.each do |name|
           begin
             if @dry_run
               rows << [name, '-', target_branch, 'dry-run']
@@ -153,10 +157,63 @@ module CocoapodsPodx
         end
 
         if failures.any?
-          raise Pod::Informative, "Podfile.overlay 本地组件切换发布分支失败：\n#{failures.join("\n")}"
+          raise Pod::Informative, "本地组件切换发布分支失败：\n#{failures.join("\n")}"
         end
 
         rows
+      end
+
+      def mgit_publish_local_repo_names
+        names = []
+        repo_names = mgit_publish_repos.map { |repo| repo[:name].to_s }.reject(&:empty?)
+        main_repo = mgit_publish_config[:main_repo].to_s
+
+        repo_names.each do |repo_name|
+          next if repo_name == main_repo
+
+          names.concat(mgit_publish_local_names_for_repo(repo_name))
+        end
+
+        names.concat(mgit_publish_overlay_local_repo_names)
+
+        names.map(&:to_s).reject(&:empty?).uniq
+      end
+
+      def mgit_publish_overlay_local_repo_names
+        return [] unless respond_to?(:load_entries, true)
+
+        load_entries.map { |entry| entry[:name].to_s }
+      end
+
+      def mgit_publish_local_names_for_repo(repo_name)
+        normalized_repo = repo_name.to_s.downcase
+        entries = CocoapodsPodx::Runtime.managed_pod_entries
+        matches = entries.select do |entry|
+          raw_name = entry[:name].to_s
+          group_name = entry[:group_name].to_s
+          remote_name = (entry[:remote_name] || raw_name).to_s
+          local_name = (entry[:local_name] || '').to_s
+
+          [
+            raw_name,
+            group_name,
+            remote_name,
+            local_name,
+            CocoapodsPodx::Runtime.local_repo_folder_name_for(raw_name)
+          ].any? { |value| value.to_s.downcase == normalized_repo }
+        end
+
+        return [repo_name] if matches.empty?
+
+        matches.map do |entry|
+          group_name = entry[:group_name].to_s
+          target_name = CocoapodsPodx::Runtime.config[:target_name].to_s
+          if !group_name.empty? && group_name != 'nn_ios' && group_name != target_name
+            group_name
+          else
+            entry[:name]
+          end
+        end
       end
 
       def mgit_publish_checkout_project_repo(target_branch)
@@ -349,7 +406,8 @@ module CocoapodsPodx
       end
 
       def default_mgit_publish_repo_url(name, base_url)
-        name == 'nnios' ? (git_remote_url || "#{base_url}/#{name}.git") : "#{base_url}/#{name}.git"
+        main_remote = respond_to?(:git_remote_url, true) ? git_remote_url : nil
+        name == 'nnios' ? (main_remote || "#{base_url}/#{name}.git") : "#{base_url}/#{name}.git"
       end
     end
   end

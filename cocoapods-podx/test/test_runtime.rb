@@ -340,13 +340,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
       attr_reader :requested_urls
 
-      def initialize
+      def initialize(project_dir)
+        @project_directory = project_dir
         @pod_names = ['1274']
         @requested_urls = []
       end
 
       def podfile_path
-        File.join(Dir.pwd, 'Podfile')
+        File.join(@project_directory, 'Podfile')
       end
 
       def jenkins_job_urls
@@ -369,7 +370,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def open_jenkins_log_file(path)
         @opened_path = path
       end
-    end.new
+    end.new(@project_dir)
 
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
@@ -497,14 +498,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
       attr_reader :requested_urls
 
-      def initialize
+      def initialize(project_dir)
+        @project_directory = project_dir
         @pod_names = []
         @jenkins_history_limit = '3'
         @requested_urls = []
       end
 
       def podfile_path
-        File.join(Dir.pwd, 'Podfile')
+        File.join(@project_directory, 'Podfile')
       end
 
       def jenkins_job_urls
@@ -543,7 +545,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
           ]
         }
       end
-    end.new
+    end.new(@project_dir)
 
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
@@ -1186,6 +1188,78 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
+  def test_publish_syncs_local_overlay_repos_to_publish_branch_after_success
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_reader :updates
+
+      def initialize
+        @pod_names = []
+        @dry_run = false
+        @updates = []
+      end
+
+      def validate_jenkins_publish_context!; end
+
+      def jenkins_publish_job_profile
+        { default_channel: 'pgyer' }
+      end
+
+      def jenkins_deploy_target(_channel)
+        { name: '蒲公英' }
+      end
+
+      def validate_jenkins_publish_target!(_job_profile, _target); end
+
+      def validate_jenkins_publish_branch!(_branch, _target); end
+
+      def jenkins_publish_branch
+        'origin/release/5.14.3'
+      end
+
+      def jenkins_build_params(_job_profile, branch, _target)
+        { 'branch' => branch }
+      end
+
+      def print_publish_header(_branch, _target); end
+
+      def publish_git_rows(_branch)
+        []
+      end
+
+      def print_publish_git_table(_rows); end
+
+      def print_jenkins_progress(_message); end
+
+      def trigger_jenkins_build_with_auto_fix_retry(_params, _target_name); end
+
+      def load_entries
+        [{ name: 'NNBussCom' }, { name: 'NNBasciCommon' }]
+      end
+
+      def update_local_repo(name, dry_run:, pull:, expected_branch:, quiet:)
+        @updates << [name, dry_run, pull, expected_branch, quiet]
+        true
+      end
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      publisher.publish_to_jenkins
+    end
+
+    assert_equal [
+      ['NNBussCom', false, true, 'release/5.14.3', true],
+      ['NNBasciCommon', false, true, 'release/5.14.3', true]
+    ], publisher.updates
+    assert_includes output, '【本地组件同步】'
+    assert_includes output, '| NNBussCom     | release/5.14.3 | 已同步 |'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
   def test_jenkins_build_fallback_progress_only_says_switch_when_next_url_exists
     publisher = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
@@ -1468,18 +1542,85 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_equal(
       [
-        ['NNBasciCommon', '-', 'release/5.14.2', 'ok'],
         ['NNBussCom', '-', 'release/5.14.2', 'ok'],
+        ['NNBasciCommon', '-', 'release/5.14.2', 'ok'],
       ],
       publisher.mgit_publish_sync_overlay_repos('release/5.14.2')
     )
     assert_equal(
       [
-        ['NNBasciCommon', false, true, 'release/5.14.2'],
         ['NNBussCom', false, true, 'release/5.14.2'],
+        ['NNBasciCommon', false, true, 'release/5.14.2'],
       ],
       publisher.updates
     )
+  end
+
+  def test_mgit_publish_syncs_publish_repos_instead_of_only_overlay_repos
+    original_config_path = CocoapodsPodx::Runtime.instance_variable_get(:@config_path)
+    original_project_config = CocoapodsPodx::Runtime.instance_variable_get(:@project_config)
+    project_dir = Dir.mktmpdir('cocoapods-podx-mgit-publish-sync')
+    File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
+      target_name: nn_ios
+      git_base_url: http://git.example.com
+      publish_main_repo: nnios
+      publish_repos:
+        - nnios
+        - nnbusscom
+        - nnyytext
+        - nngeneral
+    YAML
+    File.write(File.join(project_dir, 'Podfile'), <<~RUBY)
+      pod 'NNLibrary', :branch => 'develop', :remote_name => 'NNYYText', :local_name => 'NNLibrary'
+      pod 'NNLogin', :branch => 'develop', :group_name => 'NNBussCom'
+      pod 'NNGeneral', :branch => 'develop'
+    RUBY
+    CocoapodsPodx::Runtime.configure(project_directory: project_dir)
+
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+
+      attr_reader :updates
+
+      def initialize
+        @dry_run = false
+        @updates = []
+      end
+
+      def load_entries
+        [{ name: 'NNLibrary' }, { name: 'NNBasciCommon' }]
+      end
+
+      def update_local_repo(name, dry_run:, pull:, expected_branch:)
+        @updates << [name, dry_run, pull, expected_branch]
+        true
+      end
+    end.new
+
+    rows = publisher.mgit_publish_sync_local_repos('release/5.14.2')
+
+    assert_equal(
+      [
+        ['NNBussCom', '-', 'release/5.14.2', 'ok'],
+        ['NNLibrary', '-', 'release/5.14.2', 'ok'],
+        ['NNGeneral', '-', 'release/5.14.2', 'ok'],
+        ['NNBasciCommon', '-', 'release/5.14.2', 'ok'],
+      ],
+      rows
+    )
+    assert_equal(
+      [
+        ['NNBussCom', false, true, 'release/5.14.2'],
+        ['NNLibrary', false, true, 'release/5.14.2'],
+        ['NNGeneral', false, true, 'release/5.14.2'],
+        ['NNBasciCommon', false, true, 'release/5.14.2'],
+      ],
+      publisher.updates
+    )
+  ensure
+    CocoapodsPodx::Runtime.instance_variable_set(:@config_path, original_config_path)
+    CocoapodsPodx::Runtime.instance_variable_set(:@project_config, original_project_config)
+    FileUtils.rm_rf(project_dir) if project_dir
   end
 
   def test_mgit_publish_table_output
@@ -2059,6 +2200,23 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     helper.instance_variable_set(:@dry_run, true)
     assert_equal '***,', helper.jenkins_publish_password_for(name: 'TestFlight', value: 'TestFlight,')
+  end
+
+  def test_jenkins_publish_password_validates_before_triggering_build
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+
+    helper.instance_variable_set(:@publish_password, 'wrong')
+    error = assert_raises(Pod::Informative) do
+      helper.jenkins_build_params({ branch_param: 'branch', source_param: nil }, 'origin/release/5.14.2', name: 'TestFlight', value: 'TestFlight,', kind: :app)
+    end
+
+    assert_includes error.message, '打包密码错误'
+
+    helper.instance_variable_set(:@publish_password, 'admin123')
+    params = helper.jenkins_build_params({ branch_param: 'branch', source_param: nil }, 'origin/release/5.14.2', name: 'TestFlight', value: 'TestFlight,', kind: :app)
+    assert_equal 'admin123,', params['VERIFICATION_PASSWORD']
   end
 
   def test_jenkins_publish_release_branch_validation
