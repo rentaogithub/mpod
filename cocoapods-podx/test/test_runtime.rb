@@ -162,7 +162,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'cocoapods-podx $current_version 已是最新版本，无需更新'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'GEM_HOME="$gem_home"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'RUBYLIB="$podx_lib'
-    refute_includes CocoapodsPodx::ShimGenerator.podx, 'pod overlay --jenkins-fix'
+    refute_includes CocoapodsPodx::ShimGenerator.podx, 'pod podx --jenkins-fix'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'overlay --jenkins-fix'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_INTERNAL=1'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'branch|list)'
@@ -172,7 +172,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_cocoapods_gem_home'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_podx_lib_path'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'RUBYLIB="$podx_lib'
-    refute_includes CocoapodsPodx::ShimGenerator.mgit, 'pod overlay'
+    refute_includes CocoapodsPodx::ShimGenerator.mgit, 'pod podx'
     refute_includes CocoapodsPodx::ShimGenerator.mgit, 'COCOAPODS_PODX_INTERNAL=1'
   end
 
@@ -1419,6 +1419,87 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes prompt, 'token=[REDACTED]'
   end
 
+  def test_hermes_publish_evolution_records_failure_case_database
+    dir = Dir.mktmpdir('cocoapods-podx-cases')
+    db_path = File.join(dir, 'cases.jsonl')
+    original_db = ENV['COCOAPODS_PODX_FAILURE_CASE_DB']
+    ENV['COCOAPODS_PODX_FAILURE_CASE_DB'] = db_path
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      def initialize
+        @jenkins_hermes_analysis = true
+      end
+
+      def hermes_command
+        nil
+      end
+
+      def configured_jenkins_job_name
+        'nn'
+      end
+    end.new
+
+    report = {
+      type: 'App Store Framework 元数据',
+      reason: "ERROR ITMS-90060: http://10.1.3.177/job/nn Payload/NNIM.app/Frameworks/libwebp.framework",
+      evidence: ["CFBundleShortVersionString '1.5.0.0' in /Users/a1/workspace/nn/libwebp.framework is invalid."],
+      suggestions: ['修复 framework Info.plist']
+    }
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.run_hermes_publish_evolution(
+        event: 'publish_failed',
+        report: report,
+        target_name: 'TestFlight',
+        build_number: 1203,
+        result: 'FAILURE',
+        failure_lines: ['password=secret token=abcdef /Users/a1/workspace/nn'],
+        auto_fix: nil,
+        error: nil
+      )
+    end
+
+    assert_includes output, '【失败案例库】已记录'
+    assert File.exist?(db_path)
+    record = JSON.parse(File.read(db_path).lines.first)
+    assert_equal 'App Store Framework 元数据', record['type']
+    assert_equal 'publish_failed', record['event']
+    refute_includes record['reason'], '10.1.3.177'
+    refute_includes record['failure_lines'].join("\n"), 'secret'
+    refute_includes record['failure_lines'].join("\n"), '/Users/a1'
+    assert_match(/\A[0-9a-f]{16}\z/, record['fingerprint'])
+  ensure
+    ENV['COCOAPODS_PODX_FAILURE_CASE_DB'] = original_db
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  def test_hermes_publish_evolution_prompt_includes_failure_case_summaries
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+
+    prompt = helper.hermes_publish_evolution_prompt(
+      event: 'auto_fix_succeeded',
+      report: { type: 'CocoaPods 依赖', reason: 'spec repo stale' },
+      target_name: '蒲公英',
+      build_number: 1275,
+      result: 'FAILURE',
+      failure_lines: ['CocoaPods could not find compatible versions'],
+      auto_fix: { key: :jenkins_fix_pods, job: 'pod-repo-update' },
+      error: nil,
+      recent_cases: ['- 2026-05-13 | publish_failed | CocoaPods 依赖 | spec repo stale']
+    )
+
+    assert_includes prompt, '历史案例库摘要'
+    assert_includes prompt, 'spec repo stale'
+    assert_includes prompt, 'auto_fix_succeeded'
+  end
+
   def test_publish_only_can_resolve_current_git_branch
     project_dir = Dir.mktmpdir('cocoapods-podx-publish-only')
     File.write(File.join(project_dir, 'Podfile'), "target 'App' do\nend\n")
@@ -1452,7 +1533,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       assert_includes output, '| main'
       assert_includes output, '| NNLibrary'
       assert_includes output, '| NNLibrary | main | -'
-      assert_includes output, 'status [done] 1 skipped 1'
+      assert_includes output, '【status 汇总】处理 1 个，跳过 1 个'
       Pod::UI.define_singleton_method(:puts, original_puts)
     end
   ensure

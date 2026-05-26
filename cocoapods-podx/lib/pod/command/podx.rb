@@ -9,7 +9,7 @@ require_relative '../../cocoapods_podx/commands/mgit_publish'
 require_relative '../../cocoapods_podx/ai_bootstrap'
 require_relative '../../cocoapods_podx/shim_generator'
 
-class Pod::Command::Overlay < Pod::Command
+class Pod::Command::Podx < Pod::Command
   include CocoapodsPodx::Commands::GitActions
   include CocoapodsPodx::Commands::JenkinsPublish
   include CocoapodsPodx::Commands::OverlayFile
@@ -118,6 +118,8 @@ class Pod::Command::Overlay < Pod::Command
       ['--version', '查看当前 cocoapods-podx 插件版本。'],
       ['--init', '初始化 podx.config.yml。'],
       ['--ai', '执行 AI 辅助初始化命令：init、update、doctor、mcp。'],
+      ['--open', '打开当前工程 .xcworkspace；配合 --overlay 打开 Podfile.overlay。'],
+      ['--overlay', 'podx open --overlay 使用，打开 Podfile.overlay。'],
       ['--install-command-shims', '重新生成 podx/mgit 快捷命令，并清理旧快捷命令。'],
       ['--disable', '切远端；本质是从 Podfile.overlay 中移除。'],
     ].concat(super)
@@ -165,6 +167,8 @@ class Pod::Command::Overlay < Pod::Command
     @version_mode = argv.flag?('version', false)
     @init_mode = argv.flag?('init', false)
     @ai_mode = argv.flag?('ai', false)
+    @open_mode = argv.flag?('open', false)
+    @open_overlay_mode = argv.flag?('overlay', false)
     @install_command_shims_mode = argv.flag?('install-command-shims', false)
     @disable = argv.flag?('disable', false)
     @pod_names = argv.arguments! || []
@@ -179,6 +183,7 @@ class Pod::Command::Overlay < Pod::Command
     super
     return if @version_mode
     return if @ai_mode
+    return if @open_mode
     return if @install_command_shims_mode
     return if @publish_mode
     return if @jenkins_history_mode
@@ -197,7 +202,7 @@ class Pod::Command::Overlay < Pod::Command
 
   def run
     unless internal_podx_invocation?
-      Pod::UI.puts 'pod overlay 是 cocoapods-podx 的内部入口，请使用 podx 或 mgit。'
+      Pod::UI.puts 'pod podx 是 cocoapods-podx 的内部入口，请使用 podx 或 mgit。'
       Pod::UI.puts '示例：podx update NNBussCom'
       Pod::UI.puts '示例：podx open --overlay'
       Pod::UI.puts '示例：mgit status'
@@ -211,6 +216,11 @@ class Pod::Command::Overlay < Pod::Command
 
     if @ai_mode
       CocoapodsPodx::AiBootstrap.run(@pod_names, project_directory: ai_project_directory)
+      return
+    end
+
+    if @open_mode
+      open_project_resource
       return
     end
 
@@ -543,6 +553,26 @@ class Pod::Command::Overlay < Pod::Command
     Pod::UI.puts "cocoapods-podx #{version}"
   end
 
+  def open_project_resource
+    path = if @open_overlay_mode
+      overlay_path
+    else
+      Dir.glob(File.join(project_directory, '*.xcworkspace')).first ||
+        Dir.glob(File.join(project_directory, '*.xcodeproj')).first ||
+        project_directory
+    end
+
+    unless File.exist?(path)
+      raise Pod::Informative, "打开失败，文件不存在：#{path}"
+    end
+
+    if system('open', path)
+      Pod::UI.puts "open [ok] #{path}"
+    else
+      raise Pod::Informative, "打开失败：#{path}"
+    end
+  end
+
   def install_command_shims(gem_home, version = nil)
     pod_bin = `command -v pod`.strip
     return if pod_bin.empty?
@@ -720,7 +750,8 @@ class Pod::Command::Overlay < Pod::Command
       [name, mode, local_branch, declared_branch_for(name) || 'main']
     end
 
-    print_table(%w[组件 模式 本地分支 Podfile分支], rows)
+    print_box_table('podx list 结果', %w[组件 模式 本地分支 Podfile分支], rows)
+    Pod::UI.puts "【podx list 汇总】本地 #{rows.count { |row| row[1] == 'local' }} 个，远端 #{rows.count { |row| row[1] == 'remote' }} 个"
   end
 
   def print_table(headers, rows)

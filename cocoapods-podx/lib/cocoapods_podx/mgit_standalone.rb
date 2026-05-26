@@ -244,14 +244,20 @@ module CocoapodsPodx
 
     def show_branch_info
       names = @pod_names.empty? ? load_entries.map { |entry| entry[:name] } : @pod_names
-      if names.empty?
-        Pod::UI.puts 'Podfile.overlay 中当前没有本地模式组件。'
-        return
+      app_branch = main_app_branch
+      rows = [['main', app_branch || 'unknown', app_branch ? '当前' : '未知', '-']]
+      names.each do |name|
+        status = branch_status_for(name, app_branch)
+        rows << [
+          name,
+          status[:branch] || '-',
+          branch_status_label(status[:tag]),
+          status[:app_branch] || '-'
+        ]
       end
 
-      app_branch = main_app_branch
-      Pod::UI.puts(app_branch ? "主工程分支：#{app_branch}" : '主工程分支 [unknown]')
-      names.each { |name| Pod::UI.puts format_branch_status(name, branch_status_for(name, app_branch)) }
+      git_action_print_table('branch 结果', %w[仓库 当前分支 状态 对齐分支], rows)
+      Pod::UI.puts "【branch 汇总】主工程 #{app_branch || 'unknown'}，组件 #{names.length} 个"
     end
 
     def branch_status_for(name, app_branch)
@@ -265,16 +271,16 @@ module CocoapodsPodx
       branch == app_branch ? { tag: 'ok', branch: branch } : { tag: 'no', branch: branch, app_branch: app_branch }
     end
 
-    def format_branch_status(name, status)
-      case status[:tag]
+    def branch_status_label(tag)
+      case tag
       when 'ok'
-        "#{name} [ok] #{status[:branch]}"
+        '已对齐'
       when 'no'
-        "#{name} [no] #{status[:branch]} -> #{status[:app_branch]}"
+        '未对齐'
       when 'missing'
-        "#{name} [missing]"
+        '缺失'
       else
-        status[:branch] ? "#{name} [unknown] #{status[:branch]}" : "#{name} [unknown]"
+        '未知'
       end
     end
 

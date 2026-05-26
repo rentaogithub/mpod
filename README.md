@@ -23,6 +23,51 @@ Hermes Agent 与 iOS DevOps 的组合方案见 [HERMES_IOS_DEVOPS.md](HERMES_IOS
 - AI 配置统一放在 `.claude/` 下，形成团队一致的开发、测试、发布和评审规则。
 - 工程私有地址、账号、令牌、发布服务地址都应放在本地配置或环境变量中，不写入 README。
 
+## 整体架构
+
+```mermaid
+flowchart TB
+  User["开发者终端"] --> Podx["podx"]
+  User --> Mgit["mgit"]
+  Codex["Codex / MCP Client"] --> MCP["cocoapods-podx-mcp"]
+  MCP --> Podx
+  MCP --> Mgit
+
+  Podx --> PodxBin["bin/podx"]
+  Mgit --> MgitBin["bin/mgit"]
+  PodxBin --> PodxCommand["Pod::Command::Podx"]
+  MgitBin --> MgitStandalone["MgitStandalone"]
+
+  PodxCommand --> Runtime["Runtime<br/>配置读取 / 依赖决策"]
+  PodxCommand --> OverlayFile["OverlayFile<br/>Podfile.overlay 读写"]
+  PodxCommand --> GitActions["GitActions<br/>组合 Git 操作"]
+  PodxCommand --> JenkinsPublish["JenkinsPublish<br/>Jenkins 打包发布<br/>打包自我修复能力"]
+  PodxCommand --> MgitPublish["MgitPublish<br/>多仓库发布分支"]
+
+  MgitStandalone --> GitActions
+  MgitStandalone --> MgitPublish
+
+  Runtime --> Podfile["Podfile<br/>内部组件声明"]
+  Runtime --> Config["podx.config.yml<br/>工程级配置"]
+  Runtime --> Overlay["Podfile.overlay<br/>本地组件开关"]
+  Runtime --> DevPods["Development Pods/<br/>本地组件仓库"]
+
+  JenkinsPublish --> Jenkins["Jenkins<br/>打包 / 发布任务"]
+  PublishScript["tools/cocoapods-podx.sh publish"] --> Gem["cocoapods-podx.gem"]
+  Gem --> Nexus["Nexus RubyGems"]
+  InstallScript["tools/cocoapods-podx.sh install"] --> Nexus
+  InstallScript --> Shims["podx / mgit 命令 shim"]
+```
+
+核心分层：
+
+- 命令入口层：`bin/podx`、`bin/mgit`，把用户命令转换为插件动作或原生工具语义。
+- CocoaPods 插件层：`Pod::Command::Podx`，统一调度依赖切换、工程诊断、发布和打开工程。
+- Runtime 层：读取 `podx.config.yml`、解析主 `Podfile`，决定组件走本地 `:path` 还是远端 `:git/:branch`。
+- 功能模块层：`OverlayFile`、`GitActions`、`MgitPublish`、`JenkinsPublish`，分别处理文件、Git、多仓发布和 Jenkins 打包。
+- MCP 集成层：`cocoapods-podx-mcp`，向 Codex 暴露受控的 `podx` / `mgit` 能力。
+- 安装发布层：`tools/cocoapods-podx.sh` 及底层脚本，负责 gem 安装、卸载、发布和命令 shim 生成。
+
 ## 安装
 
 在工程目录执行：
@@ -58,6 +103,34 @@ mgit branch
 ```
 
 安装脚本会优先安装到当前 CocoaPods 使用的 RubyGems 环境。没有 CocoaPods 的机器会进入 publish-only 模式，仍可使用 `podx publish --job ...`、`podx ai ...` 和 `mgit ...`。
+
+## 依赖环境
+
+基础环境：
+
+- macOS：用于 iOS 工程、Xcode、CocoaPods 和 `open` 等系统能力。
+- Ruby / RubyGems：用于运行 `cocoapods-podx` gem、构建 gem、安装命令 shim。
+- CocoaPods：用于 `podx install`、`podx update`、`pod podx` 等 CocoaPods 插件能力。
+- Git：用于 `mgit`、本地组件仓库、发布分支和远端 commit 信息查询。
+- Node.js：仅 MCP 服务需要，用于运行 `cocoapods-podx-mcp/server.js`。
+
+发布和 CI 环境：
+
+- Nexus RubyGems 仓库：存放 `cocoapods-podx-*.gem`，供团队安装和升级。
+- Jenkins：供 `podx publish` 触发打包、查询历史、拉取日志、分析失败和执行维护 job。
+- Hermes：可选，用于 Jenkins 失败日志二次分析和发布经验沉淀。
+- Xcode / xcodebuild：仅 iOS 打包机或本地编译需要。
+
+环境变量建议：
+
+- `COCOAPODS_PODX_GEM_SOURCE`：覆盖插件 gem 下载/发布源。
+- `COCOAPODS_PODX_VERSION`：安装时指定插件版本。
+- `GEM_HOST_API_KEY`：发布 gem 到私有 RubyGems 仓库时使用。
+- `COCOAPODS_PODX_AUTO_FIX_RETRY`：控制 Jenkins 自动修复后的自动重试。
+- `COCOAPODS_PODX_HERMES_EVOLUTION`：控制发布失败后的 Hermes 经验沉淀。
+- `COCOAPODS_PODX_FAILURE_CASE_DB`：Jenkins 失败案例库路径，默认 `~/.cocoapods-podx/jenkins_failure_cases.jsonl`；设置为 `0` 可关闭。
+
+README 不记录任何内网地址、账号、token、证书或具体 Jenkins URL；这些信息应由本地环境变量、CI/CD 配置或团队私有文档维护。
 
 ## 接入工程
 
@@ -224,6 +297,63 @@ node tools/cocoapods-podx-mcp/server.js
 - `mgit_checkout`
 - `mgit_stash`
 
+## cocoapods-podx 插件发布
+
+插件源码位于：
+
+```text
+tools/cocoapods-podx/
+```
+
+发布入口：
+
+```bash
+sh tools/cocoapods-podx.sh publish
+```
+
+指定版本发布：
+
+```bash
+sh tools/cocoapods-podx.sh publish 0.0.49
+```
+
+推荐发布前检查：
+
+```bash
+ruby -c tools/cocoapods-podx/lib/pod/command/podx.rb
+ruby -c tools/cocoapods-podx/lib/cocoapods_podx/mgit_standalone.rb
+ruby -c tools/cocoapods-podx/lib/cocoapods_podx/commands/git_actions.rb
+node --check tools/cocoapods-podx-mcp/server.js
+sh tools/cocoapods-podx.sh install-local
+podx version
+mgit branch
+```
+
+发布流程：
+
+1. `publish-cocoapods-podx.sh` 读取 `cocoapods-podx.gemspec` 当前版本。
+2. 未指定版本时，脚本查询 Nexus 中最新版本并自动递增 patch。
+3. 更新 gemspec 版本号。
+4. 执行 `gem build cocoapods-podx.gemspec` 生成 `cocoapods-podx-版本号.gem`。
+5. 上传 gem 到 Nexus RubyGems 仓库。
+6. 输出安装命令，供打包机或开发机升级验证。
+
+发布后验证：
+
+```bash
+sh tools/cocoapods-podx.sh install 版本号
+podx version
+podx doctor
+mgit status
+```
+
+注意事项：
+
+- 发布前确认 `cocoapods-podx.gemspec` 的 `spec.files` 覆盖 `bin/*` 和 `lib/**/*.rb`。
+- `bin/podx`、`bin/mgit` 是命令 shim 模板，安装后会生成到 CocoaPods 所在 RubyGems 环境。
+- 如果只想验证本地源码，不要发布到 Nexus，使用 `sh tools/cocoapods-podx.sh install-local`。
+- 打包机升级建议通过 Jenkins 维护 job 执行，避免人工登录机器改环境。
+
 ## 发布约束
 
 - `podx publish` 默认发布远端当前分支 HEAD。
@@ -238,6 +368,7 @@ node tools/cocoapods-podx-mcp/server.js
 - `podx publish` 检测到 Jenkins 打包机缺少/版本过旧的 `cocoapods-podx` 配置时，会自动触发维护 job，默认 job 为 `pod-upgrade`。
 - 自动修复 job 成功后会自动重新触发一次 Jenkins 打包；可通过 `COCOAPODS_PODX_AUTO_FIX_RETRY=0` 关闭自动重试。
 - `podx publish` 失败和自动修复事件会在检测到 Hermes 时触发自我进化分析，沉淀可复用发布经验；可通过 `--no-hermes` 或 `COCOAPODS_PODX_HERMES_EVOLUTION=0` 关闭。
+- `podx publish` 会把允许 Hermes 进化分析的 Jenkins 失败事件写入失败案例库，字段包含构建号、渠道、失败分类、关键日志、修复策略和脱敏后的错误信息；Hermes 分析时会带上最近历史案例摘要，便于沉淀常见失败 case 和完善自动修复策略。
 - 其它常见 iOS 打包环境问题可按类型配置维护 job，命中后自动触发并提示重新发布：
   - `COCOAPODS_PODX_AUTO_FIX_PODS_JOB`：CocoaPods specs/cache 或依赖解析问题。
   - `COCOAPODS_PODX_AUTO_FIX_NETWORK_JOB`：Git、Specs、第三方下载源网络问题。

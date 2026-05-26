@@ -12,6 +12,8 @@ const DEFAULT_MAX_OUTPUT = 60000;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fallbackProjectDirectory = resolve(__dirname, "../..");
+const localPodxRoot = resolve(__dirname, "../cocoapods-podx");
+const localPodxLib = resolve(localPodxRoot, "lib");
 
 const tools = [
   {
@@ -84,6 +86,8 @@ const tools = [
 
 let input = Buffer.alloc(0);
 let transportMode = null;
+let stdinEnded = false;
+let pendingResponses = 0;
 
 process.stdin.on("data", chunk => {
   input = Buffer.concat([input, chunk]);
@@ -91,7 +95,8 @@ process.stdin.on("data", chunk => {
 });
 
 process.stdin.on("end", () => {
-  process.exit(0);
+  stdinEnded = true;
+  exitIfIdle();
 });
 
 function projectSchema(extraProperties = {}, required = []) {
@@ -129,6 +134,10 @@ function reposSchema(extraProperties = {}, required = []) {
       type: "array",
       description: "可选仓库名列表，例如 NNBussCom、NNLibrary。",
       items: { type: "string" }
+    },
+    maxOutput: {
+      type: "number",
+      description: "最大输出字符数，默认 60000。"
     },
     ...extraProperties
   }, required);
@@ -193,6 +202,7 @@ function parseContentLength(header) {
 async function handleMessage(message) {
   if (message.method?.startsWith("notifications/")) return;
 
+  pendingResponses += 1;
   try {
     if (message.method === "initialize") {
       sendResult(message.id, {
@@ -237,6 +247,9 @@ async function handleMessage(message) {
     sendError(message.id, -32601, `不支持的方法：${message.method}`);
   } catch (error) {
     sendError(message.id, -32000, error.message);
+  } finally {
+    pendingResponses -= 1;
+    exitIfIdle();
   }
 }
 
@@ -296,12 +309,16 @@ function nearestPodfileDirectory(start) {
 }
 
 async function commandTool(cwd, command, args, maxOutput) {
-  const result = await runCommand(cwd, command, args, maxOutput);
+  const executable = commandExecutable(command);
+  const result = await runCommand(cwd, executable, args, maxOutput);
+  const status = result.exitCode === 0 ? "成功" : "失败";
+  const truncated = result.truncated ? "，输出已截断" : "";
   const text = [
+    `【执行结果】${status}，退出码 ${result.exitCode}${truncated}`,
     `$ ${command} ${args.join(" ")}`,
     `cwd: ${cwd}`,
     "",
-    result.output
+    result.output || "(无输出)"
   ].join("\n").trimEnd();
 
   return {
@@ -329,7 +346,13 @@ function runCommand(cwd, command, args, maxOutput) {
           "/usr/sbin",
           "/sbin",
           process.env.PATH ?? ""
-        ].join(":")
+        ].join(":"),
+        RUBYLIB: existsSync(localPodxLib)
+          ? [localPodxLib, process.env.RUBYLIB ?? ""].filter(Boolean).join(":")
+          : process.env.RUBYLIB,
+        COCOAPODS_PODX_LOCAL_LIB: existsSync(localPodxLib)
+          ? localPodxLib
+          : process.env.COCOAPODS_PODX_LOCAL_LIB
       },
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -374,6 +397,13 @@ function runCommand(cwd, command, args, maxOutput) {
   });
 }
 
+function commandExecutable(command) {
+  if (command !== "podx" && command !== "mgit") return command;
+
+  const localExecutable = resolve(localPodxRoot, "bin", command);
+  return existsSync(localExecutable) ? localExecutable : command;
+}
+
 function toolError(message) {
   return {
     isError: true,
@@ -412,4 +442,10 @@ function sendMessage(message) {
     return;
   }
   process.stdout.write(`Content-Length: ${Buffer.byteLength(payload, "utf8")}\r\n\r\n${payload}`);
+}
+
+function exitIfIdle() {
+  if (stdinEnded && pendingResponses === 0) {
+    process.exit(0);
+  }
 }

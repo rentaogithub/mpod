@@ -24,7 +24,7 @@ flowchart TB
 
   Podx --> BinPodx["bin/podx"]
   Mgit --> BinMgit["bin/mgit"]
-  BinPodx --> PodCommand["Pod::Command::Overlay"]
+  BinPodx --> PodCommand["Pod::Command::Podx"]
   BinMgit --> PodCommand
   BinMgit --> MgitStandalone["mgit_standalone<br/>无 CocoaPods 模式"]
 
@@ -32,7 +32,7 @@ flowchart TB
   PodCommand --> OverlayFile["OverlayFile<br/>Podfile.overlay 读写"]
   PodCommand --> GitActions["GitActions<br/>组合 git 操作"]
   PodCommand --> MgitPublish["MgitPublish<br/>多仓库发布分支"]
-  PodCommand --> JenkinsPublish["JenkinsPublish<br/>Jenkins 打包发布"]
+  PodCommand --> JenkinsPublish["JenkinsPublish<br/>Jenkins 打包发布<br/>打包自我修复能力"]
   PodCommand --> ShimGenerator["ShimGenerator<br/>podx/mgit shim"]
 
   Runtime --> Podfile["Podfile<br/>私有组件 pod 声明"]
@@ -51,7 +51,7 @@ flowchart TB
 | 层级 | 主要文件 | 职责 |
 | --- | --- | --- |
 | 命令入口层 | `bin/podx`、`bin/mgit` | 把用户命令映射为插件动作或原生 `pod` / `git` 语义 |
-| CocoaPods 插件层 | `lib/pod/command/overlay.rb` | 统一调度 `podx`、`mgit`、publish、doctor、shim 等能力 |
+| CocoaPods 插件层 | `lib/pod/command/podx.rb` | 统一调度 `podx`、`mgit`、publish、doctor、shim 等能力 |
 | Runtime 层 | `lib/cocoapods_podx/runtime.rb` | 读取配置，解析内部组件，决定本地 `:path` 或远端 `:git/:branch` |
 | 功能模块层 | `commands/*.rb` | 拆分 overlay 文件、组合 git、Jenkins 发布、多仓库发布分支 |
 | 安装发布层 | `tools/cocoapods-podx.sh`、`install/uninstall/publish` 脚本 | 从 Nexus 安装、升级、卸载、发布 gem，生成命令 shim |

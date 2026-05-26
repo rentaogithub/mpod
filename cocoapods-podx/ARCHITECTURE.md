@@ -20,7 +20,7 @@ tools/cocoapods-podx/
   lib/
     cocoapods-podx.rb                     # 插件加载入口，注入 npod DSL
     cocoapods_plugin.rb                      # CocoaPods 插件发现入口
-    pod/command/overlay.rb                   # 插件内部命令调度
+    pod/command/podx.rb                      # Pod::Command::Podx 命令发现入口与调度实现
     cocoapods_podx/
       runtime.rb                             # Podfile runtime、npod 解析、本地/远端依赖决策
       shim_generator.rb                      # podx/mgit shim 模板读取
@@ -50,7 +50,7 @@ tools/publish-cocoapods-podx.sh           # 维护者发布 gem 到 Nexus 的底
 内部调度类定义在：
 
 ```text
-lib/pod/command/overlay.rb
+lib/pod/command/podx.rb
 ```
 
 它负责：
@@ -61,7 +61,7 @@ lib/pod/command/overlay.rb
 - 按模式分发到不同模块
 - 安装命令 shim
 
-`overlay.rb` 应保持为“调度器”，不要继续堆业务流程。新增大功能时优先放到 `lib/cocoapods_podx/commands/` 下的模块。
+`podx.rb` 内部主类为 `Pod::Command::Podx`，应保持为“调度器”，不要继续堆业务流程。新增大功能时优先放到 `lib/cocoapods_podx/commands/` 下的模块。
 
 ### podx
 
@@ -106,7 +106,7 @@ mgit publish release/5.14.2 -> 创建或更新多仓库发布分支
 ```
 
 `mgit` 只承载多仓库 git 语义，不承载 CocoaPods 依赖安装语义。
-`bin/mgit` 始终直接进入 `cocoapods_podx/mgit_standalone`，不再通过 `pod overlay` 转发，避免不同机器的 CocoaPods / RubyGems 环境影响 `mgit`。
+`bin/mgit` 始终直接进入 `cocoapods_podx/mgit_standalone`，不再通过 `pod podx` 转发，避免不同机器的 CocoaPods / RubyGems 环境影响 `mgit`。
 当前支持 branch、checkout、merge、stash、status、diff、log、add、pull、push、commit、publish。
 
 ## Runtime 层
@@ -285,7 +285,7 @@ lib/cocoapods_podx/shim_generator.rb
 - 读取 `bin/mgit`
 - 给安装脚本统一生成快捷命令
 
-这样 `podx`、`mgit` 的模板只维护一份，不会在 `overlay.rb`、安装脚本中重复。
+这样 `podx`、`mgit` 的模板只维护一份，不会在 `Pod::Command::Podx`、安装脚本中重复。
 
 ## 关键流程
 
@@ -378,7 +378,7 @@ Nexus 删除旧包是运维动作，不放进插件项目代码。需要清理�
 1. 优先判断是否和原生 `pod` 命令冲突。
 2. 如果是插件增强能力，在 `bin/podx` 中映射到插件内部动作。
 3. 如果逻辑超过少量分发代码，在 `lib/cocoapods_podx/commands/` 下新增模块。
-4. `overlay.rb` 只加参数解析和分发。
+4. `Pod::Command::Podx` 只加参数解析和分发。
 
 ### 新增 mgit 命令
 

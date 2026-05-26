@@ -1,7 +1,7 @@
 require 'cocoapods'
 require_relative 'cocoapods_podx/runtime'
 require_relative 'cocoapods_podx/shim_generator'
-require_relative 'pod/command/overlay'
+require_relative 'pod/command/podx'
 
 module CocoapodsPodx
   module DSLPatch

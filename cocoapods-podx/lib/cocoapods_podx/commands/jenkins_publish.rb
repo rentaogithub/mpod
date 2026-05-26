@@ -1,8 +1,11 @@
+require 'digest'
 require 'net/http'
 require 'open3'
+require 'time'
 require 'tmpdir'
 require 'timeout'
 require 'uri'
+require_relative '../failure_case_store'
 
 module CocoapodsPodx
   module Commands
@@ -1602,6 +1605,18 @@ module CocoapodsPodx
       def run_hermes_publish_evolution(event:, report:, target_name:, build_number:, result:, failure_lines:, auto_fix:, error: nil)
         return unless jenkins_hermes_enabled?
 
+        case_record = record_jenkins_failure_case(
+          event: event,
+          report: report,
+          target_name: target_name,
+          build_number: build_number,
+          result: result,
+          failure_lines: failure_lines,
+          auto_fix: auto_fix,
+          error: error
+        )
+        recent_cases = recent_jenkins_failure_case_summaries(current_fingerprint: case_record && case_record[:fingerprint])
+
         hermes = hermes_command
         unless hermes
           Pod::UI.puts '【Hermes进化】未检测到 hermes，跳过发布经验沉淀'
@@ -1616,7 +1631,8 @@ module CocoapodsPodx
           result: result,
           failure_lines: failure_lines,
           auto_fix: auto_fix,
-          error: error
+          error: error,
+          recent_cases: recent_cases
         )
         output, status = Timeout.timeout(hermes_evolution_timeout) do
           Open3.capture2e(hermes, '-z', prompt)
@@ -1649,9 +1665,10 @@ module CocoapodsPodx
         ENV.fetch('COCOAPODS_PODX_HERMES_EVOLUTION_TIMEOUT', '20').to_i
       end
 
-      def hermes_publish_evolution_prompt(event:, report:, target_name:, build_number:, result:, failure_lines:, auto_fix:, error:)
+      def hermes_publish_evolution_prompt(event:, report:, target_name:, build_number:, result:, failure_lines:, auto_fix:, error:, recent_cases: [])
         sanitized_lines = failure_lines.map { |line| sanitize_hermes_memory_text(line) }.first(20)
         sanitized_fix = auto_fix ? "#{auto_fix[:key]} #{auto_fix[:job] || auto_fix[:message]}" : 'none'
+        case_context = recent_cases.empty? ? '暂无历史相似案例。' : recent_cases.join("\n")
         <<~PROMPT
           你是 iOS DevOps 发布流程自我进化助手。请基于本次 Jenkins 发布事件，完成两件事：
           1. 判断这是否是值得沉淀到 Hermes memory 的稳定经验；如果是，请记忆为通用规则。
@@ -1673,11 +1690,96 @@ module CocoapodsPodx
           关键日志：
           #{sanitized_lines.join("\n")}
 
+          历史案例库摘要：
+          #{case_context}
+
           请用简短中文输出：
           - 记忆状态
           - 可复用经验
           - 后续优化建议
         PROMPT
+      end
+
+      def record_jenkins_failure_case(event:, report:, target_name:, build_number:, result:, failure_lines:, auto_fix:, error:)
+        store = jenkins_failure_case_store
+        return if store.disabled?
+
+        record = jenkins_failure_case_record(
+          event: event,
+          report: report,
+          target_name: target_name,
+          build_number: build_number,
+          result: result,
+          failure_lines: failure_lines,
+          auto_fix: auto_fix,
+          error: error
+        )
+        store.append(record)
+        Pod::UI.puts "【失败案例库】已记录 #{record[:fingerprint]} #{store.path}"
+        record
+      rescue => e
+        Pod::UI.puts "【失败案例库】写入失败：#{e.message}"
+        nil
+      end
+
+      def jenkins_failure_case_record(event:, report:, target_name:, build_number:, result:, failure_lines:, auto_fix:, error:)
+        evidence = Array(report[:evidence]).map { |line| sanitize_hermes_memory_text(line) }.first(8)
+        sanitized_lines = failure_lines.map { |line| sanitize_hermes_memory_text(line) }.first(20)
+        fingerprint_source = [
+          report[:type],
+          report[:reason],
+          evidence.join("\n"),
+          sanitized_lines.first(5).join("\n")
+        ].join("\n")
+        {
+          schema_version: 1,
+          created_at: Time.now.utc.iso8601,
+          event: event.to_s,
+          job: configured_jenkins_job_name.to_s,
+          target: sanitize_hermes_memory_text(target_name),
+          build_number: build_number,
+          result: sanitize_hermes_memory_text(result),
+          type: sanitize_hermes_memory_text(report[:type]),
+          reason: sanitize_hermes_memory_text(report[:reason]),
+          fingerprint: Digest::SHA256.hexdigest(fingerprint_source)[0, 16],
+          evidence: evidence,
+          failure_lines: sanitized_lines,
+          suggestions: Array(report[:suggestions]).map { |line| sanitize_hermes_memory_text(line) }.first(8),
+          auto_fix: jenkins_failure_case_auto_fix(auto_fix),
+          error: sanitize_hermes_memory_text(error)
+        }
+      end
+
+      def jenkins_failure_case_auto_fix(auto_fix)
+        return nil unless auto_fix
+
+        {
+          key: auto_fix[:key].to_s,
+          job: sanitize_hermes_memory_text(auto_fix[:job]),
+          message: sanitize_hermes_memory_text(auto_fix[:message]),
+          success_message: sanitize_hermes_memory_text(auto_fix[:success_message])
+        }
+      end
+
+      def recent_jenkins_failure_case_summaries(current_fingerprint: nil, limit: 5)
+        jenkins_failure_case_store.recent_summaries(current_fingerprint: current_fingerprint, limit: limit, formatter: lambda do |row|
+          fix = row[:auto_fix].is_a?(Hash) ? row[:auto_fix][:key].to_s : ''
+          pieces = [
+            row[:created_at],
+            row[:event],
+            row[:type],
+            row[:reason],
+            fix.empty? ? nil : "auto_fix=#{fix}"
+          ].compact
+          "- #{truncate_display(pieces.join(' | '), 180)}"
+        end)
+      rescue => e
+        Pod::UI.puts "【失败案例库】读取失败：#{e.message}"
+        []
+      end
+
+      def jenkins_failure_case_store
+        @jenkins_failure_case_store ||= CocoapodsPodx::FailureCaseStore.default
       end
 
       def sanitize_hermes_memory_text(value)

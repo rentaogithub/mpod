@@ -219,8 +219,8 @@ module CocoapodsPodx
           raise Pod::Informative, "以下仓库 #{action} 失败：\n#{failures.join("\n")}"
         end
 
-        label = @dry_run ? "#{action} [dry-run]" : "#{action} [done]"
-        Pod::UI.puts "#{label} #{done_count} skipped #{skipped_count}"
+        label = @dry_run ? "#{action} 预览" : "#{action} 汇总"
+        Pod::UI.puts "【#{label}】处理 #{done_count} 个，跳过 #{skipped_count} 个"
       end
 
       def git_action_name
@@ -324,8 +324,8 @@ module CocoapodsPodx
           raise Pod::Informative, "以下仓库提交失败：\n#{failures.join("\n")}"
         end
 
-        label = @dry_run ? 'commit [dry-run]' : 'commit [done]'
-        Pod::UI.puts "#{label} #{committed_count} skipped #{skipped_count}"
+        label = @dry_run ? 'commit 预览' : 'commit 汇总'
+        Pod::UI.puts "【#{label}】处理 #{committed_count} 个，跳过 #{skipped_count} 个"
       end
 
       def align_git_action_branch(name, path, branch, status)
