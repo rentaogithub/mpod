@@ -946,7 +946,7 @@ module CocoapodsPodx
           ENV['COCOAPODS_PODX_VERIFICATION_PASSWORD'] ||
           ENV['COCOAPODS_OVERLAY_PUBLISH_PASSWORD'] ||
           ENV['COCOAPODS_PODX_PUBLISH_PASSWORD'] ||
-          'admin123'
+          '1234'
       end
 
       def print_publish_header(jenkins_branch, target)

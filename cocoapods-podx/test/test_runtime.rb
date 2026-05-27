@@ -2295,9 +2295,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_includes error.message, '打包密码错误'
 
-    helper.instance_variable_set(:@publish_password, 'admin123')
+    helper.instance_variable_set(:@publish_password, '1234')
     params = helper.jenkins_build_params({ branch_param: 'branch', source_param: nil }, 'origin/release/5.14.2', name: 'TestFlight', value: 'TestFlight,', kind: :app)
-    assert_equal 'admin123,', params['VERIFICATION_PASSWORD']
+    assert_equal '1234,', params['VERIFICATION_PASSWORD']
   end
 
   def test_jenkins_publish_release_branch_validation
