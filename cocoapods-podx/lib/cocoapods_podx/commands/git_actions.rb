@@ -1,4 +1,6 @@
 
+require_relative '../rules'
+
 module CocoapodsPodx
   module Commands
     module GitActions
@@ -308,7 +310,13 @@ module CocoapodsPodx
 
           begin
             run_git!(path, 'add', '-A')
-            run_git!(path, 'commit', '-m', @commit_message.strip)
+            if git_action_protected_edit_commit?(name, status)
+              with_git_action_protected_commit_allowed do
+                run_git!(path, 'commit', '-m', @commit_message.strip)
+              end
+            else
+              run_git!(path, 'commit', '-m', @commit_message.strip)
+            end
             rows << [name, branch, 'committed']
             committed_count += 1
           rescue => e
@@ -326,6 +334,29 @@ module CocoapodsPodx
 
         label = @dry_run ? 'commit 预览' : 'commit 汇总'
         Pod::UI.puts "【#{label}】处理 #{committed_count} 个，跳过 #{skipped_count} 个"
+      end
+
+      def git_action_protected_edit_commit?(name, status)
+        return false unless name.to_s == 'main'
+
+        files = Array(@protected_edit_files).map { |file| File.basename(file.to_s.strip) }.reject(&:empty?)
+        return false if files.empty?
+
+        changed_files = Array(status).map { |line| File.basename(line.to_s.split(/\s+/).last.to_s) }
+        !(files & changed_files).empty?
+      end
+
+      def with_git_action_protected_commit_allowed
+        rule = CocoapodsPodx::Rules::CommitProtection.new(config: {})
+        previous = ENV[rule.allow_env]
+        ENV[rule.allow_env] = rule.allow_context
+        yield
+      ensure
+        if previous.nil?
+          ENV.delete(rule.allow_env)
+        else
+          ENV[rule.allow_env] = previous
+        end
       end
 
       def align_git_action_branch(name, path, branch, status)

@@ -23,11 +23,12 @@ module CocoapodsPodx
           target = jenkins_deploy_target(channel)
           validate_jenkins_publish_target!(job_profile, target)
           validate_jenkins_publish_branch!(branch, target)
-          params = jenkins_build_params(job_profile, branch, target)
 
           print_publish_header(branch, target)
           rows = publish_git_rows(branch)
           print_publish_git_table(rows)
+          validate_publish_remote_release_branches!(branch, rows, target)
+          params = jenkins_build_params(job_profile, branch, target)
           if @dry_run
             Pod::UI.puts '【打包结果】dry-run，不触发 Jenkins 打包'
           else
@@ -894,7 +895,32 @@ module CocoapodsPodx
         normalized_branch = branch.to_s.sub(%r{\Aorigin/}, '')
         return if normalized_branch.match?(/\Arelease\/\d+\.\d+\.\d+\z/)
 
+        unless jenkins_publish_branch_explicit?
+          command = target[:value] == 'AppStore,' ? 'podx publish app' : 'podx publish tf'
+          raise Pod::Informative, "#{target[:name]} 当前分支不是 release/x.x.x，不能直接执行 #{command}；请使用 \"#{command} --branch release/x.x.x\"，或者切换到 \"release/x.x.x\" 分支后执行。当前分支为 #{branch}"
+        end
+
         raise Pod::Informative, "#{target[:name]} 只能发布 release/x.x.x 分支，当前分支为 #{branch}"
+      end
+
+      def validate_publish_remote_release_branches!(branch, rows, target)
+        return if target[:kind] == :framework
+        return if target[:value] == 'Pgyer,'
+
+        normalized_branch = branch.to_s.sub(%r{\Aorigin/}, '')
+        return unless normalized_branch.match?(/\Arelease\/\d+\.\d+\.\d+\z/)
+
+        missing_rows = rows.select { |row| row[:commit].to_s == '-' }
+        return if missing_rows.empty?
+
+        details = missing_rows.map do |row|
+          "#{row[:repo]} #{row[:branch]}（#{row[:log]}）"
+        end
+        raise Pod::Informative, "#{target[:name]} 发布要求 release/x.x.x 分支在远端主工程和依赖组件仓库都存在，未检测到：#{details.join('；')}"
+      end
+
+      def jenkins_publish_branch_explicit?
+        !@publish_branch.to_s.strip.empty?
       end
 
       def jenkins_publish_password_for(target)

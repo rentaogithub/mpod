@@ -41,10 +41,12 @@ flowchart TB
   PodxCommand --> Runtime["Runtime<br/>配置读取 / 依赖决策"]
   PodxCommand --> OverlayFile["OverlayFile<br/>Podfile.overlay 读写"]
   PodxCommand --> GitActions["GitActions<br/>组合 Git 操作"]
+  PodxCommand --> Rules["Rules<br/>团队规则器<br/>提交保护 / 发布约束"]
   PodxCommand --> JenkinsPublish["JenkinsPublish<br/>Jenkins 打包发布<br/>打包自我修复能力"]
   PodxCommand --> MgitPublish["MgitPublish<br/>多仓库发布分支"]
 
   MgitStandalone --> GitActions
+  MgitStandalone --> Rules
   MgitStandalone --> MgitPublish
 
   Runtime --> Podfile["Podfile<br/>内部组件声明"]
@@ -64,6 +66,7 @@ flowchart TB
 - 命令入口层：`bin/podx`、`bin/mgit`，把用户命令转换为插件动作或原生工具语义。
 - CocoaPods 插件层：`Pod::Command::Podx`，统一调度依赖切换、工程诊断、发布和打开工程。
 - Runtime 层：读取 `podx.config.yml`、解析主 `Podfile`，决定组件走本地 `:path` 还是远端 `:git/:branch`。
+- Rules 层：集中管理团队规则，例如受保护提交文件、`mgit publish` 放行上下文、后续发布/合并约束。
 - 功能模块层：`OverlayFile`、`GitActions`、`MgitPublish`、`JenkinsPublish`，分别处理文件、Git、多仓发布和 Jenkins 打包。
 - MCP 集成层：`cocoapods-podx-mcp`，向 Codex 暴露受控的 `podx` / `mgit` 能力。
 - 安装发布层：`tools/cocoapods-podx.sh` 及底层脚本，负责 gem 安装、卸载、发布和命令 shim 生成。
@@ -79,7 +82,7 @@ sh tools/cocoapods-podx.sh install
 指定版本：
 
 ```bash
-sh tools/cocoapods-podx.sh install 0.0.10
+sh tools/cocoapods-podx.sh install 0.0.51
 ```
 
 本地源码编译安装，不发布、不访问 Nexus：
@@ -201,7 +204,8 @@ podx doctor                      # 检查工程配置和本地组件状态
 podx open                        # 打开 .xcworkspace
 podx open --overlay              # 打开或生成 Podfile.overlay
 podx upgrade                     # 升级 cocoapods-podx 到 Nexus 最新版本
-podx upgrade 0.0.42              # 升级 cocoapods-podx 到指定版本
+podx upgrade 0.0.51              # 升级 cocoapods-podx 到指定版本
+podx hooks install               # 安装 Git 提交保护 hook，默认拦截 Podfile.rb
 podx publish                     # 触发默认发布渠道
 podx publish tf                  # 触发 TestFlight 发布
 podx publish app                 # 触发 App Store 发布
@@ -231,10 +235,24 @@ mgit pull                        # 多仓库拉取
 mgit push                        # 多仓库推送
 mgit add                         # 多仓库 git add -A
 mgit commit -m "message"         # 多仓库提交
+mgit commit -m "message" -edit Podfile.rb # 显式允许提交受保护文件
 mgit checkout NNBussCom develop  # 切换指定组件分支
 mgit stash NNBussCom             # stash 指定组件仓库
 mgit publish release/x.y.z       # 创建或更新多仓库发布分支
 ```
+
+`podx hooks install` 会展示当前工程规则，并为命中的仓库安装 `pre-commit` 和 `post-merge`。默认只保护主工程的 `Podfile.rb`；如需调整保护文件，可在 `podx.config.yml` 中配置：
+
+```yaml
+protected_commit_files:
+  - Podfile
+```
+
+受保护文件只能由 `mgit publish <branch>` 或 `mgit commit -m "msg" -edit Podfile.rb` 提交；普通 `git commit`、未声明 `-edit` 的 `mgit commit` 和其他入口都会被 hook 拦截。
+
+`git pull`、`mgit pull` 或 `git merge` 后如果受保护文件被带入变更，`post-merge` 会从 `ORIG_HEAD` 自动还原该文件并输出提示。
+
+规则清单会同时展示 `mgit publish release/x.y.z` 相关约束：发布分支、Podfile 组件分支改写、iOS 主工程 Version/Build 生成规则，以及 `podx publish tf/app` 的 release 分支限制。执行 `podx publish tf` 或 `podx publish app` 时，如果未指定 `--branch`，当前主工程分支也必须是 `release/x.x.x`；发布前还会确认主工程和依赖组件的远端 `release/x.x.x` 分支都存在。
 
 ## AI 初始化
 
@@ -314,7 +332,7 @@ sh tools/cocoapods-podx.sh publish
 指定版本发布：
 
 ```bash
-sh tools/cocoapods-podx.sh publish 0.0.49
+sh tools/cocoapods-podx.sh publish 0.0.51
 ```
 
 推荐发布前检查：

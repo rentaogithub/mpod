@@ -1,4 +1,5 @@
 require 'fileutils'
+require_relative '../rules'
 
 module CocoapodsPodx
   module Commands
@@ -242,8 +243,23 @@ module CocoapodsPodx
         run_git!(repo_dir, 'add', *changed_files)
         message = "chore: update publish config to #{target_branch}"
         message += " #{release_version}(#{release_build})" if release_version
-        run_git!(repo_dir, 'commit', '-m', message)
+        with_mgit_publish_protected_commit_allowed do
+          run_git!(repo_dir, 'commit', '-m', message)
+        end
         changed_files
+      end
+
+      def with_mgit_publish_protected_commit_allowed
+        rule = CocoapodsPodx::Rules::CommitProtection.new(config: {})
+        previous = ENV[rule.allow_env]
+        ENV[rule.allow_env] = rule.allow_context
+        yield
+      ensure
+        if previous.nil?
+          ENV.delete(rule.allow_env)
+        else
+          ENV[rule.allow_env] = previous
+        end
       end
 
       def mgit_publish_print_table(title, rows, headers:)

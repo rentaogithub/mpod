@@ -3,6 +3,7 @@ require 'fileutils'
 require 'open3'
 require 'yaml'
 require_relative '../../cocoapods_podx/commands/git_actions'
+require_relative '../../cocoapods_podx/commands/git_hooks'
 require_relative '../../cocoapods_podx/commands/jenkins_publish'
 require_relative '../../cocoapods_podx/commands/overlay_file'
 require_relative '../../cocoapods_podx/commands/mgit_publish'
@@ -11,6 +12,7 @@ require_relative '../../cocoapods_podx/shim_generator'
 
 class Pod::Command::Podx < Pod::Command
   include CocoapodsPodx::Commands::GitActions
+  include CocoapodsPodx::Commands::GitHooks
   include CocoapodsPodx::Commands::JenkinsPublish
   include CocoapodsPodx::Commands::OverlayFile
   include CocoapodsPodx::Commands::MgitPublish
@@ -55,6 +57,7 @@ class Pod::Command::Podx < Pod::Command
             podx ai update                 更新 CodeGraph，并检查 Code Review Graph 改动影响
             podx ai doctor                 检查 AI 辅助工具状态
             podx ai mcp                    输出 Hermes MCP 注册说明
+            podx hooks install             为主工程和本地组件安装提交保护 hook
             podx version                   查看当前插件版本
 
       git 命令:
@@ -70,6 +73,7 @@ class Pod::Command::Podx < Pod::Command
             mgit pull [NAME]               组合执行 git pull --ff-only
             mgit push [NAME]               组合执行 git push
             mgit commit [NAME] -m "msg"    组合提交主工程和本地组件仓库
+            mgit commit -m "msg" -edit Podfile.rb
             mgit publish release/x.x.x     从 develop 创建/更新多仓库发布分支并推送
   DESC
   self.arguments = [
@@ -92,6 +96,7 @@ class Pod::Command::Podx < Pod::Command
       ['--pull', '组合执行 git pull --ff-only。'],
       ['--push', '组合执行 git push。'],
       ['--commit', '组合提交主工程和当前本地组件仓库。'],
+      ['--edit=FILE', 'mgit commit 显式允许提交受保护文件，例如 Podfile.rb。'],
       ['--git-publish', '按多仓库发布流程创建/更新目标分支；供 mgit publish 使用。'],
       ['--base-branch=BRANCH', 'mgit publish 使用的基准分支，默认 develop。'],
       ['--push-mode=MODE', 'mgit publish 推送模式：normal、skip、set-upstream，默认 normal。'],
@@ -118,6 +123,7 @@ class Pod::Command::Podx < Pod::Command
       ['--version', '查看当前 cocoapods-podx 插件版本。'],
       ['--init', '初始化 podx.config.yml。'],
       ['--ai', '执行 AI 辅助初始化命令：init、update、doctor、mcp。'],
+      ['--hooks', '执行 Git hook 辅助命令：install。'],
       ['--open', '打开当前工程 .xcworkspace；配合 --overlay 打开 Podfile.overlay。'],
       ['--overlay', 'podx open --overlay 使用，打开 Podfile.overlay。'],
       ['--install-command-shims', '重新生成 podx/mgit 快捷命令，并清理旧快捷命令。'],
@@ -161,12 +167,14 @@ class Pod::Command::Podx < Pod::Command
     @jenkins_hermes_analysis = !argv.flag?('no-hermes', false)
     @assume_yes = argv.flag?('yes', false)
     @commit_message = argv.option('m') || argv.option('message')
+    @protected_edit_files = [argv.option('edit')].compact
     @stash_message = argv.option('m') || argv.option('message')
     @dry_run = argv.flag?('dry-run', false)
     @doctor_mode = argv.flag?('doctor', false)
     @version_mode = argv.flag?('version', false)
     @init_mode = argv.flag?('init', false)
     @ai_mode = argv.flag?('ai', false)
+    @hooks_mode = argv.flag?('hooks', false)
     @open_mode = argv.flag?('open', false)
     @open_overlay_mode = argv.flag?('overlay', false)
     @install_command_shims_mode = argv.flag?('install-command-shims', false)
@@ -175,6 +183,7 @@ class Pod::Command::Podx < Pod::Command
     @pod_names = @pod_names.map(&:strip).reject(&:empty?)
     normalize_git_add_arguments!
     extract_commit_message_from_arguments!
+    extract_protected_edit_files_from_arguments!
     extract_checkout_branch_from_arguments!
     super
   end
@@ -183,6 +192,7 @@ class Pod::Command::Podx < Pod::Command
     super
     return if @version_mode
     return if @ai_mode
+    return if @hooks_mode
     return if @open_mode
     return if @install_command_shims_mode
     return if @publish_mode
@@ -216,6 +226,11 @@ class Pod::Command::Podx < Pod::Command
 
     if @ai_mode
       CocoapodsPodx::AiBootstrap.run(@pod_names, project_directory: ai_project_directory)
+      return
+    end
+
+    if @hooks_mode
+      run_hooks_command(load_entries)
       return
     end
 
@@ -336,6 +351,17 @@ class Pod::Command::Podx < Pod::Command
     ENV['COCOAPODS_PODX_INTERNAL'] == '1'
   end
 
+  def run_hooks_command(entries)
+    command = @pod_names.shift.to_s
+    command = 'install' if command.empty?
+    case command
+    when 'install'
+      install_git_hooks(entries)
+    else
+      raise Pod::Informative, "未知 hooks 命令：#{command}"
+    end
+  end
+
   def extract_commit_message_from_arguments!
     filtered_names = []
     index = 0
@@ -357,6 +383,33 @@ class Pod::Command::Podx < Pod::Command
       end
     end
 
+    @pod_names = filtered_names
+  end
+
+  def extract_protected_edit_files_from_arguments!
+    filtered_names = []
+    index = 0
+
+    while index < @pod_names.length
+      token = @pod_names[index]
+      if token == '-edit' || token == '--edit'
+        raise Pod::Informative, "缺少参数值：#{token}" if @pod_names[index + 1].to_s.strip.empty?
+
+        (@protected_edit_files ||= []) << @pod_names[index + 1]
+        index += 2
+      elsif token.start_with?('-edit=')
+        (@protected_edit_files ||= []) << token.sub(/\A-edit=/, '')
+        index += 1
+      elsif token.start_with?('--edit=')
+        (@protected_edit_files ||= []) << token.sub(/\A--edit=/, '')
+        index += 1
+      else
+        filtered_names << token
+        index += 1
+      end
+    end
+
+    @protected_edit_files = Array(@protected_edit_files).map(&:to_s).map(&:strip).reject(&:empty?)
     @pod_names = filtered_names
   end
 

@@ -13,12 +13,14 @@ module Pod
 end unless defined?(Pod::UI)
 
 require_relative '../lib/cocoapods_podx/commands/git_actions'
+require_relative '../lib/cocoapods_podx/commands/git_hooks'
 require_relative '../lib/cocoapods_podx/commands/jenkins_publish'
 require_relative '../lib/cocoapods_podx/commands/mgit_publish'
 require_relative '../lib/cocoapods_podx/commands/overlay_file'
 require_relative '../lib/cocoapods_podx/ai_bootstrap'
 require_relative '../lib/cocoapods_podx/mgit_standalone'
 require_relative '../lib/cocoapods_podx/publish_only'
+require_relative '../lib/cocoapods_podx/rules'
 require_relative '../lib/cocoapods_podx/runtime'
 require_relative '../lib/cocoapods_podx/shim_generator'
 
@@ -152,6 +154,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish doctor [BUILD]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish fix [BUILD]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'cocoapods_podx/publish_only'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx hooks install'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --dry-run --hooks'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_gem_home'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_ruby'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_podx_lib_path'
@@ -2040,6 +2044,201 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
+  def test_git_hooks_install_pre_commit_protects_configured_files
+    project_dir = Dir.mktmpdir('cocoapods-podx-hooks')
+    main_path = File.join(project_dir, 'main')
+    component_path = File.join(project_dir, 'Development Pods', 'NNBussCom')
+    FileUtils.mkdir_p(File.join(main_path, '.git', 'hooks'))
+    FileUtils.mkdir_p(File.join(component_path, '.git', 'hooks'))
+    File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
+      protected_commit_files:
+        - Podfile
+    YAML
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::GitHooks
+
+      def initialize(project_dir, main_path, component_path)
+        @project_directory = main_path
+        @config_path = File.join(project_dir, 'podx.config.yml')
+        @component_path = component_path
+        @dry_run = false
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def config_path
+        @config_path
+      end
+
+      def local_repo_path_for(_name)
+        @component_path
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+    end.new(project_dir, main_path, component_path)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.install_git_hooks([{ name: 'NNBussCom' }])
+    end
+
+    main_hook = File.read(File.join(main_path, '.git', 'hooks', 'pre-commit'))
+    main_post_merge_hook = File.read(File.join(main_path, '.git', 'hooks', 'post-merge'))
+    assert_includes main_hook, 'cocoapods-podx protected files hook'
+    assert_includes main_hook, "'Podfile'"
+    assert_includes main_hook, 'COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT'
+    assert_includes main_hook, 'mgit_publish'
+    assert_includes main_post_merge_hook, 'cocoapods-podx protected files post-merge hook'
+    assert_includes main_post_merge_hook, 'git checkout ORIG_HEAD -- "$protected_file"'
+    assert_includes main_post_merge_hook, 'pull/merge 后已还原'
+    refute_includes main_hook, "'Podflie.rb'"
+    assert_includes output, '【hooks 结果】'
+    assert_includes output, '【hooks 规则】'
+    assert_includes output, '| 提交保护 | 配置'
+    assert_includes output, '| 合并保护 | 配置'
+    assert_includes output, 'publish/commit-edit'
+    assert_includes output, '| main'
+    refute_includes output, 'NNBussCom'
+    refute File.exist?(File.join(component_path, '.git', 'hooks', 'pre-commit'))
+    refute File.exist?(File.join(component_path, '.git', 'hooks', 'post-merge'))
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_git_hooks_upsert_replaces_existing_podx_block
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitHooks
+    end.new
+
+    original = <<~SH
+      #!/bin/sh
+      echo before
+
+      # >>> cocoapods-podx protected files hook
+      old
+      # <<< cocoapods-podx protected files hook
+    SH
+    updated = helper.upsert_podx_hook(original, %w[Podfile.rb])
+
+    assert_includes updated, 'echo before'
+    assert_includes updated, "'Podfile.rb'"
+    refute_includes updated, "\nold\n"
+    assert_equal 1, updated.scan('cocoapods-podx protected files hook').length / 2
+  end
+
+  def test_git_hooks_upsert_replaces_existing_post_merge_block
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitHooks
+    end.new
+
+    original = <<~SH
+      #!/bin/sh
+      echo before
+
+      # >>> cocoapods-podx protected files post-merge hook
+      old
+      # <<< cocoapods-podx protected files post-merge hook
+    SH
+    updated = helper.upsert_podx_post_merge_hook(original, %w[Podfile.rb])
+
+    assert_includes updated, 'echo before'
+    assert_includes updated, "'Podfile.rb'"
+    assert_includes updated, 'git checkout ORIG_HEAD -- "$protected_file"'
+    refute_includes updated, "\nold\n"
+    assert_equal 1, updated.scan('cocoapods-podx protected files post-merge hook').length / 2
+  end
+
+  def test_git_hooks_default_protected_files_are_used_without_config
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitHooks
+
+      def config_path
+        '/tmp/missing-podx-config.yml'
+      end
+    end.new
+
+    assert_equal %w[Podfile.rb], helper.protected_commit_files
+  end
+
+  def test_rules_commit_protection_uses_configured_files_instead_of_defaults
+    config_dir = Dir.mktmpdir('cocoapods-podx-rules')
+    config_path = File.join(config_dir, 'podx.config.yml')
+    File.write(config_path, <<~YAML)
+      protected_commit_files:
+        - Podfile
+    YAML
+
+    rule = CocoapodsPodx::Rules.engine(config_path: config_path).commit_protection
+
+    assert_equal %w[Podfile], rule.protected_files
+    assert_equal [], rule.protected_files_for(scope: :component)
+    assert_equal '配置', rule.protected_files_source
+    assert_equal 'COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT', rule.allow_env
+    assert_equal 'mgit_publish', rule.allow_context
+  ensure
+    FileUtils.rm_rf(config_dir) if config_dir
+  end
+
+  def test_rules_commit_protection_reports_default_source
+    rule = CocoapodsPodx::Rules.engine(config_path: '/tmp/missing-podx-config.yml').commit_protection
+
+    assert_equal %w[Podfile.rb], rule.protected_files
+    assert_equal [], rule.protected_files_for(scope: :component)
+    assert_equal '默认', rule.protected_files_source
+  end
+
+  def test_rules_summaries_include_publish_version_and_branch_rules
+    config_dir = Dir.mktmpdir('cocoapods-podx-rule-summaries')
+    config_path = File.join(config_dir, 'podx.config.yml')
+    File.write(config_path, <<~YAML)
+      publish_base_branch: develop
+      publish_main_repo: nnios
+      publish_update_podfile_branch: true
+      publish_repos:
+        - nnios
+        - nnbusscom
+      publish_version:
+        type: ios_xcodeproj
+        branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$'
+        project_file: NNIM.xcodeproj/project.pbxproj
+        build_number_strategy: ios_semver
+    YAML
+
+    rows = CocoapodsPodx::Rules.engine(config_path: config_path).summaries
+
+    assert_includes rows, ['发布分支', '配置', 'develop->release/x.x.x', 'mgit publish']
+    assert_includes rows, ['合并保护', '默认', '还原Podfile.rb', 'pull/merge']
+    assert_includes rows, ['Podfile分支', '配置', '组件branch->发布分支', 'mgit publish']
+    assert_includes rows, ['iOS版本', '配置', '改Version/Build', 'mgit publish']
+    refute rows.any? { |row| row.first == 'iOS Build' }
+    assert_includes rows, ['发布渠道', '内置', 'tf/app仅release', 'podx publish']
+  ensure
+    FileUtils.rm_rf(config_dir) if config_dir
+  end
+
+  def test_mgit_publish_allows_protected_file_commit_only_inside_publish_commit
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+    end.new
+
+    ENV.delete('COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT')
+    seen = nil
+    publisher.with_mgit_publish_protected_commit_allowed do
+      seen = ENV['COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT']
+    end
+
+    assert_equal 'mgit_publish', seen
+    assert_nil ENV['COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT']
+  end
+
   def test_git_actions_status_table_shows_filenames_without_paths
     helper = Class.new do
       include CocoapodsPodx::Commands::GitActions
@@ -2196,6 +2395,63 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
+  def test_git_actions_commit_edit_allows_protected_main_file
+    project_dir = Dir.mktmpdir('cocoapods-podx-commit-edit')
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :commands, :commit_env
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+        @commit_mode = true
+        @dry_run = false
+        @commit_message = 'update podfile'
+        @protected_edit_files = ['Podfile.rb']
+        @commands = []
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def commit_targets(_entries)
+        [{ name: 'main', path: @project_directory }]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(_path)
+        'develop'
+      end
+
+      def git_status_lines(_path)
+        [' M Podfile.rb']
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        @commit_env = ENV['COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT'] if args.first == 'commit'
+        ''
+      end
+    end.new(project_dir)
+
+    ENV.delete('COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT')
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |_message = ''| }
+    helper.commit_repos([])
+
+    assert_includes helper.commands, [project_dir, ['add', '-A']]
+    assert_includes helper.commands, [project_dir, ['commit', '-m', 'update podfile']]
+    assert_equal 'mgit_publish', helper.commit_env
+    assert_nil ENV['COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT']
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
   def test_git_actions_stash_table_shows_change_summary
     helper = Class.new do
       include CocoapodsPodx::Commands::GitActions
@@ -2312,7 +2568,46 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     error = assert_raises(Pod::Informative) do
       helper.validate_jenkins_publish_branch!('origin/develop', name: 'TestFlight', value: 'TestFlight,')
     end
+    assert_includes error.message, '当前分支不是 release/x.x.x'
+    assert_includes error.message, 'podx publish tf --branch release/x.x.x'
+    assert_includes error.message, '切换到 "release/x.x.x"'
+
+    helper.instance_variable_set(:@publish_branch, 'develop')
+    error = assert_raises(Pod::Informative) do
+      helper.validate_jenkins_publish_branch!('origin/develop', name: 'TestFlight', value: 'TestFlight,')
+    end
     assert_includes error.message, '只能发布 release/x.x.x 分支'
+  end
+
+  def test_jenkins_publish_requires_remote_release_branch_for_main_and_components
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+
+    helper.validate_publish_remote_release_branches!(
+      'origin/release/5.14.2',
+      [
+        { repo: 'nnios', branch: 'release/5.14.2', commit: 'abcdef', log: 'ok' },
+        { repo: 'NNBussCom', branch: 'release/5.14.2', commit: '123456', log: 'ok' }
+      ],
+      name: 'TestFlight',
+      value: 'TestFlight,'
+    )
+
+    error = assert_raises(Pod::Informative) do
+      helper.validate_publish_remote_release_branches!(
+        'origin/release/5.14.2',
+        [
+          { repo: 'nnios', branch: 'release/5.14.2', commit: 'abcdef', log: 'ok' },
+          { repo: 'NNBussCom', branch: 'release/5.14.2', commit: '-', log: '远端分支不存在或无法获取：release/5.14.2' }
+        ],
+        name: 'TestFlight',
+        value: 'TestFlight,'
+      )
+    end
+
+    assert_includes error.message, '远端主工程和依赖组件仓库都存在'
+    assert_includes error.message, 'NNBussCom release/5.14.2'
   end
 
   def test_jenkins_publish_default_job_urls

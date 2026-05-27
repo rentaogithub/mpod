@@ -104,6 +104,7 @@ podx upgrade                     # 升级 cocoapods-podx 到 Nexus 最新版本
 podx upgrade 0.0.42              # 升级 cocoapods-podx 到指定版本
 podx open                        # 打开当前工程 .xcworkspace
 podx open --overlay              # 打开 Podfile.overlay，文件不存在时先创建模板
+podx hooks install               # 展示团队规则，并安装 Git 提交保护 hook
 podx ai init                     # 生成 Claude Code/CodeGraph/Code Review Graph 接入模板
 podx ai update                   # 更新 CodeGraph，并检查 Code Review Graph 改动影响
 podx ai doctor                   # 检查 AI 辅助工具状态
@@ -130,6 +131,7 @@ mgit add                         # 组合执行 git add -A
 mgit pull                        # 组合执行 git pull --ff-only
 mgit push                        # 组合执行 git push
 mgit commit -m "msg"             # 组合提交主工程和当前本地组件仓库
+mgit commit -m "msg" -edit Podfile.rb # 显式允许提交受保护文件
 mgit publish release/5.14.2      # 多仓库发布分支：从 develop 创建/更新并推送
 mgit dry-run checkout release/5.14.2 # 预览切换分支
 mgit dry-run stash                # 预览 stash 动作

@@ -132,7 +132,7 @@ module CocoapodsPodx
           @dry_run = true
         when '-A', '--all', '.'
           @pod_names << arg
-        when '-m', '--message', '--limit', '--base-branch', '--push-mode', '--publish-work-dir'
+        when '-m', '--message', '--limit', '--base-branch', '--push-mode', '--publish-work-dir', '-edit', '--edit'
           pending_option = arg
         when /\A--message=(.+)\z/
           @commit_message = Regexp.last_match(1)
@@ -145,6 +145,8 @@ module CocoapodsPodx
           @git_publish_push_mode = Regexp.last_match(1)
         when /\A--publish-work-dir=(.+)\z/
           @git_publish_work_dir = Regexp.last_match(1)
+        when /\A(?:-edit|--edit)=(.+)\z/
+          (@protected_edit_files ||= []) << Regexp.last_match(1)
         when /\A-/
           raise Pod::Informative, "不支持参数：#{arg}"
         else
@@ -168,6 +170,8 @@ module CocoapodsPodx
         @git_publish_push_mode = value
       when '--publish-work-dir'
         @git_publish_work_dir = value
+      when '-edit', '--edit'
+        (@protected_edit_files ||= []) << value
       end
     end
 
@@ -417,6 +421,7 @@ module CocoapodsPodx
           mgit pull [NAME]
           mgit push [NAME]
           mgit commit [NAME] -m "msg"
+          mgit commit -m "msg" -edit Podfile.rb
           mgit publish BRANCH
           mgit dry-run <command>
       HELP
