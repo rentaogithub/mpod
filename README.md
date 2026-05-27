@@ -194,6 +194,23 @@ pod 'NNRealReachability'
 
 ## 常用命令
 
+高阶意图命令适合日常使用，底层仍复用已有 `podx` / `mgit` 能力：
+
+```bash
+podx workon NNBussCom            # 开始开发组件，等同 podx NNBussCom
+podx dev NNBussCom               # 同 podx workon
+podx check                       # 检查工程接入和本地组件状态，等同 podx doctor
+podx health                      # 同 podx check
+podx graph                       # 更新 AI 图谱并检查改动影响，等同 podx ai update
+podx tools                       # 检查 rg/fd/bat/jq/yq/delta/ast-grep/ctags/htop 等现代 CLI
+podx ship tf --branch release/5.14.2
+                                  # 发布意图入口，等同 podx publish tf --branch release/5.14.2
+podx ship dry-run app --branch release/5.14.2
+                                  # 预览发布参数，等同 podx dry-run publish app
+podx diagnose 1274               # 分析 Jenkins 打包失败，等同 podx publish doctor 1274
+podx repair 1274                 # 半自动修复 Jenkins 打包失败，等同 podx publish fix 1274
+```
+
 ```bash
 podx install --no-repo-update    # 执行 pod install，并处理 overlay 本地依赖
 podx update NNBussCom            # 更新指定 pod；命中 overlay 本地组件时先更新本地仓库

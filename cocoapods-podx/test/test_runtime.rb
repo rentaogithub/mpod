@@ -188,6 +188,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_shim_generator_reads_bin_templates
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod 扩展命令'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx workon NNBussCom'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx ship [pgyer|tf|app]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx tools'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'show_modern_cli_tools'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'workon|dev)'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'diagnose)'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'repair|heal)'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx upgrade [VERSION]'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'podx uninstall                 '
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx list'

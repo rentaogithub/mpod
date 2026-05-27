@@ -112,6 +112,18 @@ podx ai memory                   # 查看 Hermes 记忆使用说明和状态
 podx ai mcp                      # 输出 Hermes MCP 注册说明
 podx help                        # 查看中文帮助
 
+高阶意图命令：
+podx workon NNBussCom            # 开始开发组件，等同 podx NNBussCom
+podx dev NNBussCom               # 同 podx workon
+podx check                       # 检查工程接入、配置和本地组件状态，等同 podx doctor
+podx health                      # 同 podx check
+podx graph                       # 更新 AI 图谱并检查改动影响，等同 podx ai update
+podx tools                       # 检查 rg/fd/bat/jq/yq/delta/ast-grep/ctags/htop 等现代 CLI
+podx ship tf --branch release/5.14.2 # 发布意图入口，等同 podx publish tf --branch release/5.14.2
+podx ship dry-run app --branch release/5.14.2 # 预览发布参数，等同 podx dry-run publish app
+podx diagnose 1203               # 分析 Jenkins 打包失败，等同 podx publish doctor 1203
+podx repair 1203                 # 半自动修复 Jenkins 打包失败，等同 podx publish fix 1203
+
 pod 命令：
 podx install --no-repo-update    # 执行官方 pod install --no-repo-update
 podx repo update                 # 执行官方 pod repo update
