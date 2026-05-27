@@ -14,6 +14,7 @@ end unless defined?(Pod::UI)
 
 require_relative '../lib/cocoapods_podx/commands/git_actions'
 require_relative '../lib/cocoapods_podx/commands/git_hooks'
+require_relative '../lib/cocoapods_podx/commands/dependency_report'
 require_relative '../lib/cocoapods_podx/commands/jenkins_publish'
 require_relative '../lib/cocoapods_podx/commands/mgit_publish'
 require_relative '../lib/cocoapods_podx/commands/overlay_file'
@@ -107,6 +108,48 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       'http://git.example.com/nn_ios/nnbusscom.git',
       CocoapodsPodx::Runtime.remote_repo_url_for('NNBussCom')
     )
+  end
+
+  def test_dependency_report_shows_managed_branches_versions_and_dependencies
+    File.write(File.join(@project_dir, 'Podfile.lock'), <<~YAML)
+      PODS:
+        - NNApperance (0.1.0):
+          - Masonry
+        - NNLogin (0.1.0):
+          - NNApperance
+          - Alamofire
+        - Alamofire (5.8.0)
+        - Masonry (1.1.0)
+      DEPENDENCIES:
+        - NNApperance
+        - NNLogin
+        - Alamofire
+      EXTERNAL SOURCES:
+        NNApperance:
+          :git: http://git.example.com/nn_ios/nnapperance.git
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::DependencyReport
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+    end.new(@project_dir)
+
+    rows = helper.build_dependency_report_rows
+
+    assert_includes rows, ['NNApperance', '内部组件', 'develop', 'Masonry']
+    assert_includes rows, ['NNLogin', '内部组件', 'develop', 'NNApperance, Alamofire']
+    assert_includes rows, ['Alamofire', '三方库', '5.8.0', '-']
+    summary_rows = helper.dependency_summary_rows(rows)
+    assert_includes summary_rows, ['NNLogin', '内部组件', 'develop', '2']
+    assert_operator summary_rows.index(['NNLogin', '内部组件', 'develop', '2']), :<, summary_rows.index(['Alamofire', '三方库', '5.8.0', '0'])
+    assert_includes helper.dependency_relation_rows(rows), ['NNLogin', 'NNApperance, Alamofire']
+    assert_equal ['NNApperance', 'NNLogin'], helper.dependency_relation_groups(rows).map { |group| group[:name] }
   end
 
   def test_project_config_exposes_publish_settings

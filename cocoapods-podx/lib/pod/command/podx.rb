@@ -4,6 +4,7 @@ require 'open3'
 require 'yaml'
 require_relative '../../cocoapods_podx/commands/git_actions'
 require_relative '../../cocoapods_podx/commands/git_hooks'
+require_relative '../../cocoapods_podx/commands/dependency_report'
 require_relative '../../cocoapods_podx/commands/jenkins_publish'
 require_relative '../../cocoapods_podx/commands/overlay_file'
 require_relative '../../cocoapods_podx/commands/mgit_publish'
@@ -13,6 +14,7 @@ require_relative '../../cocoapods_podx/shim_generator'
 class Pod::Command::Podx < Pod::Command
   include CocoapodsPodx::Commands::GitActions
   include CocoapodsPodx::Commands::GitHooks
+  include CocoapodsPodx::Commands::DependencyReport
   include CocoapodsPodx::Commands::JenkinsPublish
   include CocoapodsPodx::Commands::OverlayFile
   include CocoapodsPodx::Commands::MgitPublish
@@ -37,6 +39,7 @@ class Pod::Command::Podx < Pod::Command
             podx [NAME]                    将组件切到本地源码
             podx disable [NAME]            将组件切回远端；不传 NAME 表示全部切回远端
             podx main                      查看主 Podfile 中的内部组件 pod 配置
+            podx deps                      查看主工程依赖组件分支/版本和组件依赖关系
             podx doctor                    检查插件接入、配置和本地组件状态
             podx publish [pgyer|tf|app]    触发 Jenkins 发布；默认 nn job 支持蒲公英/TestFlight/AppStore
             podx publish --job JOB         指定 Jenkins job 名；按该 job 参数能力发布
@@ -83,6 +86,7 @@ class Pod::Command::Podx < Pod::Command
   def self.options
     [
       ['--main', '查看主 Podfile 中的组件配置。'],
+      ['--deps', '查看主工程依赖组件分支/版本和组件依赖关系。'],
       ['--list', '查看 overlay 组件的 local/remote 状态。'],
       ['--create-overlay-file', '创建 Podfile.overlay 模板，并加入 Xcode 工程引用。'],
       ['--update', '更新 Podfile.overlay 中命中的本地组件仓库；podx update 会随后执行原生 pod update。'],
@@ -134,6 +138,7 @@ class Pod::Command::Podx < Pod::Command
   def initialize(argv)
     @project_directory = argv.option('project-directory')
     @main_mode = argv.flag?('main', false)
+    @deps_mode = argv.flag?('deps', false)
     @list_mode = argv.flag?('list', false)
     @create_overlay_file_mode = argv.flag?('create-overlay-file', false)
     @git_branch_mode = argv.flag?('git-branch', false)
@@ -203,6 +208,7 @@ class Pod::Command::Podx < Pod::Command
     help! '当前目录或指定目录下未找到 Podfile。' unless File.exist?(podfile_path)
     return if @git_publish_mode
     return if @update_mode
+    return if @deps_mode
     return if @create_overlay_file_mode
     return if @list_mode
     return if @pod_names.empty?
@@ -282,6 +288,11 @@ class Pod::Command::Podx < Pod::Command
 
     if @main_mode
       show_main_config
+      return
+    end
+
+    if @deps_mode
+      show_dependency_report
       return
     end
 
