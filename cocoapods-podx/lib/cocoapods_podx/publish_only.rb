@@ -118,6 +118,10 @@ module CocoapodsPodx
           @pod_names << arg
         when '--job', '--jenkins-job', '--jenkins-url', '--branch', '--publish-branch', '--publish-password', '--lines', '--limit', '--fix-job'
           pending_option = arg
+        when '--pipeline-gate'
+          @publish_pipeline_gate = true
+        when '--no-pipeline-gate'
+          @skip_publish_pipeline_gate = true
         when '--no-hermes'
           @jenkins_hermes_analysis = false
         when '--yes'
@@ -243,6 +247,8 @@ module CocoapodsPodx
           --job JOB
           --jenkins-url URL
           --publish-password PASSWORD
+          --pipeline-gate
+          --no-pipeline-gate
           --lines N
           --limit N
           --no-hermes

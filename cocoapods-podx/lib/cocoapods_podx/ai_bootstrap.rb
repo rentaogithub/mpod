@@ -1,5 +1,7 @@
 require 'fileutils'
 require 'open3'
+require 'set'
+require_relative 'rules'
 
 module CocoapodsPodx
   module AiBootstrap
@@ -286,6 +288,7 @@ module CocoapodsPodx
       .claude/mcps/.env
       .claude/mcps/.env.*
       !.claude/mcps/*.example.*
+
     TEXT
 
     CLAUDE_SKILL_TEMPLATES = {
@@ -879,8 +882,9 @@ module CocoapodsPodx
     def ensure_gitignore(root)
       path = File.join(root, '.gitignore')
       existing = File.exist?(path) ? File.read(path) : ''
+      missing_rules = missing_gitignore_rules(existing, gitignore_rules(root))
 
-      if existing.include?('# AI / MCP local runtime state')
+      if missing_rules.empty?
         puts "#{relative(path)} [exists]"
         return
       end
@@ -888,9 +892,26 @@ module CocoapodsPodx
       content = existing.dup
       content << "\n" unless content.empty? || content.end_with?("\n")
       content << "\n" unless content.empty? || content.end_with?("\n\n")
-      content << AI_GITIGNORE_RULES
+      content << missing_rules.join("\n")
+      content << "\n"
       File.write(path, content)
       puts "#{relative(path)} [updated]"
+    end
+
+    def missing_gitignore_rules(existing, rules)
+      existing_lines = existing.lines.map(&:strip).reject(&:empty?).to_set
+      Array(rules).flat_map { |rule| rule.to_s.lines.map(&:rstrip) }.reject do |line|
+        stripped = line.strip
+        stripped.empty? || existing_lines.include?(stripped)
+      end
+    end
+
+    def gitignore_rules(root)
+      [
+        AI_GITIGNORE_RULES,
+        '# podx local runtime artifacts',
+        *CocoapodsPodx::Rules.local_artifact_gitignore_rules(config_path: File.join(root, 'podx.config.yml'))
+      ]
     end
 
     def hermes_mcp_usage(project_directory)

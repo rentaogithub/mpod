@@ -5,6 +5,8 @@ require 'yaml'
 require_relative '../../cocoapods_podx/commands/git_actions'
 require_relative '../../cocoapods_podx/commands/git_hooks'
 require_relative '../../cocoapods_podx/commands/dependency_report'
+require_relative '../../cocoapods_podx/commands/skill_runtime'
+require_relative '../../cocoapods_podx/commands/pipeline_runtime'
 require_relative '../../cocoapods_podx/commands/jenkins_publish'
 require_relative '../../cocoapods_podx/commands/overlay_file'
 require_relative '../../cocoapods_podx/commands/mgit_publish'
@@ -15,6 +17,8 @@ class Pod::Command::Podx < Pod::Command
   include CocoapodsPodx::Commands::GitActions
   include CocoapodsPodx::Commands::GitHooks
   include CocoapodsPodx::Commands::DependencyReport
+  include CocoapodsPodx::Commands::SkillRuntime
+  include CocoapodsPodx::Commands::PipelineRuntime
   include CocoapodsPodx::Commands::JenkinsPublish
   include CocoapodsPodx::Commands::OverlayFile
   include CocoapodsPodx::Commands::MgitPublish
@@ -31,7 +35,8 @@ class Pod::Command::Podx < Pod::Command
 
             podx install [OPTIONS]         安装 Pods，等同 pod install
             podx repo update [OPTIONS]     更新 Specs 仓库，等同 pod repo update
-            podx init [OPTIONS]            初始化 Podfile，并生成 podx.config.yml
+            podx init [OPTIONS]            一键初始化工程配置、规则、技能、流程、AI 上下文和 hooks
+            podx sync                      同步团队规则、技能、流程、AI 上下文和 hooks
             podx update [NAME] [OPTIONS]   更新 Pod；命中本地组件时先更新本地仓库
 
       pod 扩展命令:
@@ -41,6 +46,38 @@ class Pod::Command::Podx < Pod::Command
             podx main                      查看主 Podfile 中的内部组件 pod 配置
             podx deps                      查看主工程依赖组件分支/版本和组件依赖关系
             podx doctor                    检查插件接入、配置和本地组件状态
+            podx rules                     查看当前工程规则器规则
+            podx rules check               检查 .gitignore 是否符合规则器治理
+            podx rules sync                补齐 .gitignore 中缺失的本地产物规则
+            podx rules snapshot            生成 .podx/rules_snapshot.json 规则快照
+            podx rules ci                  CI 门禁：生成规则快照，失败时返回非 0
+            podx pipeline                  查看团队 CI/CD 能力地图
+            podx pipeline flow             查看开发/发布主流程
+            podx pipeline ci               查看团队 CI 门禁模板
+            podx pipeline script           生成 .podx/pipeline_ci.sh，内置快照/报告/总门禁
+            podx pipeline doctor           检查团队 CI 脚本是否存在、可执行且与模板一致
+            podx pipeline snapshot         生成 .podx/pipeline_snapshot.json
+            podx pipeline report           生成 .podx/pipeline_report.md
+            podx pipeline status           汇总 rules/skill/pipeline 产物状态
+            podx pipeline gate             CI 总门禁：汇总产物状态，失败时返回非 0
+            podx pipeline policy           查看发布渠道门禁策略
+            podx pipeline readiness        按当前门禁和策略评估各渠道发布准入
+            podx skill list [KEYWORD]      查看/筛选团队 iOS DevOps skill library
+            podx skill init                生成工程级 .podx/skills.yml
+            podx skill show NAME           查看 skill 详情和执行步骤
+            podx skill history [N]         查看最近 N 次 skill 执行记录
+            podx skill stats               查看 skill 运行统计
+            podx skill report              查看 skill runtime 治理总览
+            podx skill suggest             根据治理状态给出下一步建议
+            podx skill snapshot            生成 Markdown 治理快照
+            podx skill ci                  CI 校验 skill library，并生成 Markdown/JSON 治理报告
+            podx skill ci strict           严格 CI 门禁，report fail 也会失败
+            podx skill doctor              体检团队 skill library 可用性
+            podx skill graph               查看 skill 依赖关系
+            podx skill plan NAME           展开 skill 执行计划，不执行任务
+            podx skill lint                检查 skill library 定义规范
+            podx skill verify NAME         校验 skill 前置条件，不执行任务
+            podx skill run NAME            执行已验证的浅层 skill
             podx publish [pgyer|tf|app]    触发 Jenkins 发布；默认 nn job 支持蒲公英/TestFlight/AppStore
             podx publish --job JOB         指定 Jenkins job 名；按该 job 参数能力发布
             podx publish --job nnrtc-ios-build
@@ -53,6 +90,7 @@ class Pod::Command::Podx < Pod::Command
             podx publish log [BUILD]       查看 Jenkins 构建日志；不传 BUILD 默认 lastBuild
             podx publish doctor [BUILD]    分析 Jenkins 打包失败原因；默认 lastBuild
             podx publish fix [BUILD]       半自动修复低风险打包失败；执行前确认
+            podx publish --pipeline-gate   发布前执行 pipeline 总门禁
             podx dry-run <command>         预览 publish、update、组件切换等动作
             podx open                      打开当前工程 .xcworkspace
             podx open --overlay            打开 Podfile.overlay
@@ -87,6 +125,9 @@ class Pod::Command::Podx < Pod::Command
     [
       ['--main', '查看主 Podfile 中的组件配置。'],
       ['--deps', '查看主工程依赖组件分支/版本和组件依赖关系。'],
+      ['--rules', '查看当前工程规则器规则；支持 check/sync/snapshot/ci 子命令。'],
+      ['--pipeline', '查看团队 CI/CD 能力地图；支持 flow、ci、script、doctor、snapshot、report、status、gate、policy、readiness 子命令。'],
+      ['--skill', '执行 skill runtime 命令：list、show、history、stats、report、suggest、snapshot、ci、doctor、graph、plan、lint、verify、run；ci 支持 strict 模式。'],
       ['--list', '查看 overlay 组件的 local/remote 状态。'],
       ['--create-overlay-file', '创建 Podfile.overlay 模板，并加入 Xcode 工程引用。'],
       ['--update', '更新 Podfile.overlay 中命中的本地组件仓库；podx update 会随后执行原生 pod update。'],
@@ -117,6 +158,8 @@ class Pod::Command::Podx < Pod::Command
       ['--branch=BRANCH', '指定 Jenkins 发布远端分支；tf/app 必须是 release/x.x.x，等同 --publish-branch。'],
       ['--publish-branch=BRANCH', '指定 Jenkins 发布远端分支；tf/app 必须是 release/x.x.x。'],
       ['--publish-password=PASSWORD', 'Jenkins 发布验证密码；默认交互输入 TestFlight/AppStore 密码，Pgyer 默认空。'],
+      ['--pipeline-gate', 'podx publish 触发 Jenkins 前执行 pipeline 总门禁。'],
+      ['--no-pipeline-gate', 'podx publish 临时跳过 pipeline 总门禁。'],
       ['--lines=N', '查看 Jenkins 日志时只显示最后 N 行。'],
       ['--no-hermes', '分析 Jenkins 打包失败时跳过 Hermes 二次分析。'],
       ['--yes', '半自动修复时跳过确认。'],
@@ -125,7 +168,8 @@ class Pod::Command::Podx < Pod::Command
       ['--dry-run', '预览将要执行的写入、切分支或更新动作，不修改文件或仓库。'],
       ['--doctor', '检查 Podfile、配置文件、Podfile.overlay 和本地组件仓库状态。'],
       ['--version', '查看当前 cocoapods-podx 插件版本。'],
-      ['--init', '初始化 podx.config.yml。'],
+      ['--init', '一键初始化工程配置、规则、技能、流程、AI 上下文和 hooks。'],
+      ['--sync', '同步团队规则、技能、流程、AI 上下文和 hooks。'],
       ['--ai', '执行 AI 辅助初始化命令：init、update、doctor、mcp。'],
       ['--hooks', '执行 Git hook 辅助命令：install。'],
       ['--open', '打开当前工程 .xcworkspace；配合 --overlay 打开 Podfile.overlay。'],
@@ -139,6 +183,9 @@ class Pod::Command::Podx < Pod::Command
     @project_directory = argv.option('project-directory')
     @main_mode = argv.flag?('main', false)
     @deps_mode = argv.flag?('deps', false)
+    @rules_mode = argv.flag?('rules', false)
+    @pipeline_mode = argv.flag?('pipeline', false)
+    @skill_mode = argv.flag?('skill', false)
     @list_mode = argv.flag?('list', false)
     @create_overlay_file_mode = argv.flag?('create-overlay-file', false)
     @git_branch_mode = argv.flag?('git-branch', false)
@@ -167,6 +214,8 @@ class Pod::Command::Podx < Pod::Command
     @jenkins_url = argv.option('jenkins-url')
     @publish_branch = argv.option('branch') || argv.option('publish-branch')
     @publish_password = argv.option('publish-password')
+    @publish_pipeline_gate = argv.flag?('pipeline-gate', false)
+    @skip_publish_pipeline_gate = argv.flag?('no-pipeline-gate', false)
     @jenkins_log_lines = argv.option('lines')
     @jenkins_history_limit = argv.option('limit')
     @jenkins_hermes_analysis = !argv.flag?('no-hermes', false)
@@ -178,6 +227,7 @@ class Pod::Command::Podx < Pod::Command
     @doctor_mode = argv.flag?('doctor', false)
     @version_mode = argv.flag?('version', false)
     @init_mode = argv.flag?('init', false)
+    @sync_mode = argv.flag?('sync', false)
     @ai_mode = argv.flag?('ai', false)
     @hooks_mode = argv.flag?('hooks', false)
     @open_mode = argv.flag?('open', false)
@@ -205,10 +255,13 @@ class Pod::Command::Podx < Pod::Command
     return if @jenkins_log_mode
     return if @jenkins_doctor_mode
     return if @jenkins_fix_mode
+    return if @pipeline_mode
+    return if @skill_mode
     help! '当前目录或指定目录下未找到 Podfile。' unless File.exist?(podfile_path)
     return if @git_publish_mode
     return if @update_mode
     return if @deps_mode
+    return if @rules_mode
     return if @create_overlay_file_mode
     return if @list_mode
     return if @pod_names.empty?
@@ -237,6 +290,11 @@ class Pod::Command::Podx < Pod::Command
 
     if @hooks_mode
       run_hooks_command(load_entries)
+      return
+    end
+
+    if @skill_mode
+      run_skill_command(load_entries)
       return
     end
 
@@ -296,6 +354,16 @@ class Pod::Command::Podx < Pod::Command
       return
     end
 
+    if @rules_mode
+      run_rules_command
+      return
+    end
+
+    if @pipeline_mode
+      show_pipeline_map
+      return
+    end
+
     if @list_mode
       show_overlay_list(entries)
       return
@@ -332,7 +400,12 @@ class Pod::Command::Podx < Pod::Command
     end
 
     if @init_mode
-      init_project_config
+      init_project('init')
+      return
+    end
+
+    if @sync_mode
+      init_project('sync')
       return
     end
 
@@ -371,6 +444,35 @@ class Pod::Command::Podx < Pod::Command
     else
       raise Pod::Informative, "未知 hooks 命令：#{command}"
     end
+  end
+
+  def init_project(action)
+    rows = []
+
+    init_project_config
+    rows << ['工程配置', '完成', config_path]
+
+    @pod_names = ['sync']
+    run_rules_command
+    rows << ['团队规则', '完成', '.gitignore']
+
+    @pod_names = ['init']
+    run_skill_command(load_entries)
+    rows << ['技能库', '完成', File.join(project_directory, '.podx', 'skills.yml')]
+
+    @pod_names = ['script']
+    show_pipeline_map
+    rows << ['流程产物', '完成', File.join(project_directory, '.podx', 'pipeline_ci.sh')]
+
+    CocoapodsPodx::AiBootstrap.run(['init'], project_directory: project_directory)
+    rows << ['AI 上下文', '完成', project_directory]
+
+    @pod_names = ['install']
+    run_hooks_command(load_entries)
+    rows << ['Git hooks', '完成', 'pre-commit / post-merge']
+
+    git_action_print_table("podx #{action} 汇总", %w[项目 状态 说明], rows)
+    Pod::UI.puts "podx #{action} [done]"
   end
 
   def extract_commit_message_from_arguments!
@@ -580,6 +682,12 @@ class Pod::Command::Podx < Pod::Command
       "git_base_url: #{config[:git_base_url]}",
       "publish_work_dir: .mgit-publish",
       'publish_base_branch: develop',
+      'publish_pipeline_gate: false',
+      '# publish_pipeline_gate_strategy:',
+      '#   pgyer: warn',
+      '#   testflight: strict',
+      '#   appstore: strict',
+      '#   framework: warn',
       '# publish_main_repo、publish_update_podfile_branch、publish_version 是工程定制发布动作。',
       '# 通用项目可以不配置；iOS Podfile 工程需要时再显式开启。',
       '# publish_main_repo: nnios',

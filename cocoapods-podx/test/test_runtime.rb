@@ -15,6 +15,8 @@ end unless defined?(Pod::UI)
 require_relative '../lib/cocoapods_podx/commands/git_actions'
 require_relative '../lib/cocoapods_podx/commands/git_hooks'
 require_relative '../lib/cocoapods_podx/commands/dependency_report'
+require_relative '../lib/cocoapods_podx/commands/skill_runtime'
+require_relative '../lib/cocoapods_podx/commands/pipeline_runtime'
 require_relative '../lib/cocoapods_podx/commands/jenkins_publish'
 require_relative '../lib/cocoapods_podx/commands/mgit_publish'
 require_relative '../lib/cocoapods_podx/commands/overlay_file'
@@ -34,6 +36,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       git_base_url: http://git.example.com
       publish_work_dir: .mgit-publish
       publish_base_branch: develop
+      publish_pipeline_gate: false
       publish_main_repo: nnios
       publish_update_podfile_branch: true
       publish_repos:
@@ -152,11 +155,1094 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal ['NNApperance', 'NNLogin'], helper.dependency_relation_groups(rows).map { |group| group[:name] }
   end
 
+  def test_skill_runtime_lists_and_verifies_shallow_skills
+    File.write(File.join(@project_dir, 'Podfile.lock'), "PODS:\n  - Alamofire (5.8.0)\n")
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+        @publish_branch = 'release/5.14.2'
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'develop'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+    end.new(@project_dir)
+
+    skill_names = helper.podx_skill_definitions.map { |skill| skill[:name] }
+    rows = helper.podx_skill_verify_rows(helper.find_podx_skill!('release_testflight'))
+
+    assert_includes skill_names, 'dependency_audit'
+    assert_includes skill_names, 'release_testflight'
+    assert_equal '发布', helper.find_podx_skill!('release_testflight')[:stage]
+    assert_equal ['release_pgyer', 'release_testflight', 'release_appstore'], helper.filter_podx_skills(helper.podx_skill_definitions, '发布').map { |skill| skill[:name] }
+    assert_includes rows, ['release分支', 'ok', 'release/5.14.2']
+  end
+
+  def test_skill_runtime_rejects_testflight_without_release_branch
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'develop'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_verify_rows(helper.find_podx_skill!('release_testflight'))
+
+    assert_includes rows, ['release分支', 'fail', 'tf/app 仅允许 release/x.x.x；可使用 --branch release/x.x.x']
+  end
+
+  def test_skill_runtime_loads_project_skill_library
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+            - podx doctor
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(@project_dir)
+
+    skill = helper.find_podx_skill!('local_dependency_audit')
+    rows = helper.podx_skill_verify_rows(skill)
+
+    assert_equal '项目', skill[:source]
+    assert_equal '项目', skill[:stage]
+    assert_equal ['podx deps', 'podx doctor'], skill[:steps]
+    assert_includes rows, ['steps', 'ok', '2 个步骤']
+  end
+
+  def test_skill_runtime_supports_composed_project_skills
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          stage: 依赖治理
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+        - name: local_release_readiness
+          stage: 发布
+          scene: 发布准备度检查
+          depends_on:
+            - local_dependency_audit
+          steps:
+            - mgit status
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(@project_dir)
+
+    skill = helper.find_podx_skill!('local_release_readiness')
+    rows = helper.podx_skill_verify_rows(skill)
+
+    assert_equal ['local_dependency_audit'], skill[:depends_on]
+    assert_equal 'local_dependency_audit', helper.podx_skill_depends_text(skill)
+    assert_includes rows, ['depends_on:local_dependency_audit', 'ok', 'local_dependency_audit']
+    assert_includes helper.podx_skill_graph_rows, ['local_release_readiness', '发布', 'local_dependency_audit']
+  end
+
+  def test_skill_runtime_plans_composed_project_skills
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          stage: 依赖治理
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+            - podx doctor
+        - name: local_publish_precheck
+          stage: 发布
+          scene: 发布前巡检
+          steps:
+            - mgit status
+        - name: local_release_readiness
+          stage: 发布
+          scene: 发布准备度检查
+          depends_on:
+            - local_dependency_audit
+            - local_publish_precheck
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_plan_rows(helper.find_podx_skill!('local_release_readiness'))
+
+    assert_equal [1, 'local_dependency_audit', '步骤', 'podx deps'], rows[0]
+    assert_equal [2, 'local_dependency_audit', '步骤', 'podx doctor'], rows[1]
+    assert_equal [3, 'local_publish_precheck', '步骤', 'mgit status'], rows[2]
+    assert_equal [4, 'local_release_readiness', '入口', '-'], rows[3]
+  end
+
+  def test_skill_runtime_plan_rejects_unsupported_project_step
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: unsafe_plan
+          steps:
+            - ruby dangerous.rb
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(@project_dir)
+
+    error = assert_raises(Pod::Informative) do
+      helper.validate_podx_skill_plan!(helper.find_podx_skill!('unsafe_plan'))
+    end
+    assert_includes error.message, '不支持的命令：ruby dangerous.rb'
+  end
+
+  def test_skill_runtime_lints_project_skill_library
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          stage: 依赖治理
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+        - name: local_release_readiness
+          stage: 发布
+          scene: 发布准备度检查
+          depends_on:
+            - local_dependency_audit
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_lint_rows
+
+    assert_includes rows, ['name', 'ok', '8 个 skill 名称唯一']
+    assert_includes rows, ['steps', 'ok', '由 depends_on 编排']
+    assert_includes rows, ['project_file', 'ok', File.join(@project_dir, '.podx', 'skills.yml')]
+  end
+
+  def test_skill_runtime_lint_rejects_duplicate_names
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: dependency_audit
+          scene: 重名技能
+          steps:
+            - podx deps
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def print_box_table(_title, _headers, _rows); end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_lint_rows
+    error = assert_raises(Pod::Informative) { helper.lint_podx_skills }
+
+    assert_includes rows, ['name', 'fail', 'skill 名称重复：dependency_audit']
+    assert_includes error.message, 'skill library lint 失败'
+  end
+
+  def test_skill_runtime_rejects_unknown_skill_dependency
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: bad_composed_skill
+          depends_on:
+            - missing_skill
+          steps:
+            - podx deps
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_verify_rows(helper.find_podx_skill!('bad_composed_skill'))
+
+    assert_includes rows, ['depends_on:missing_skill', 'fail', '未知依赖 skill：missing_skill']
+  end
+
+  def test_skill_runtime_rejects_circular_skill_dependency
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: skill_a
+          depends_on:
+            - skill_b
+          steps:
+            - podx deps
+        - name: skill_b
+          depends_on:
+            - skill_a
+          steps:
+            - podx doctor
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_verify_rows(helper.find_podx_skill!('skill_a'))
+
+    assert_includes rows, ['depends_on', 'fail', '检测到循环依赖：skill_a -> skill_b -> skill_a']
+  end
+
+  def test_skill_runtime_doctor_reports_skill_availability
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'develop'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+    end.new(@project_dir)
+
+    File.write(File.join(@project_dir, 'Podfile.lock'), "PODS:\n  - Alamofire (5.8.0)\n")
+    rows = helper.podx_skill_doctor_rows
+
+    assert_includes rows, ['dependency_audit', '内置', '可用', '前置条件通过']
+    assert_includes rows, ['release_testflight', '内置', '不可用', 'release分支: tf/app 仅允许 release/x.x.x；可使用 --branch release/x.x.x']
+  end
+
+  def test_skill_runtime_rejects_unsupported_project_skill_step
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: unsafe_step
+          scene: 非法步骤
+          steps:
+            - ruby dangerous.rb
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_verify_rows(helper.find_podx_skill!('unsafe_step'))
+
+    assert_includes rows, ['step1', 'fail', '不支持的命令：ruby dangerous.rb']
+  end
+
+  def test_default_skill_library_contains_publish_precheck
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+    end.new(@project_dir)
+
+    assert_includes helper.default_podx_skill_library, 'local_publish_precheck'
+    assert_includes helper.default_podx_skill_library, 'stage: 发布'
+    assert_includes helper.default_podx_skill_library, 'local_release_readiness'
+    assert_includes helper.default_podx_skill_library, 'depends_on:'
+    assert_includes helper.default_podx_skill_library, 'mgit status'
+  end
+
+  def test_skill_runtime_records_successful_runs
+    File.write(File.join(@project_dir, 'Podfile.lock'), "PODS:\n  - Alamofire (5.8.0)\n")
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def show_dependency_report; end
+
+      def doctor_overlay(_entries); end
+
+      def print_box_table(_title, _headers, _rows); end
+    end.new(@project_dir)
+
+    helper.run_podx_skill('dependency_audit', [])
+    history = helper.load_podx_skill_history
+
+    assert_equal 1, history.size
+    assert_equal 'dependency_audit', history.first['skill']
+    assert_equal 'success', history.first['status']
+    assert_equal '完成', history.first['detail']
+  end
+
+  def test_skill_runtime_summarizes_run_stats
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skill_runs.yml'), {
+      'runs' => [
+        {
+          'skill' => 'dependency_audit',
+          'source' => '内置',
+          'status' => 'success',
+          'started_at' => '2026-05-27T10:00:00+08:00',
+          'duration' => '1.00s',
+          'detail' => '完成'
+        },
+        {
+          'skill' => 'dependency_audit',
+          'source' => '内置',
+          'status' => 'failed',
+          'started_at' => '2026-05-27T11:00:00+08:00',
+          'duration' => '0.20s',
+          'detail' => '失败'
+        },
+        {
+          'skill' => 'release_pgyer',
+          'source' => '内置',
+          'status' => 'success',
+          'started_at' => '2026-05-27T12:00:00+08:00',
+          'duration' => '2.00s',
+          'detail' => '完成'
+        }
+      ]
+    }.to_yaml)
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_stats_rows
+
+    assert_includes rows, ['dependency_audit', 2, 1, 1, '50%', 'failed', '2026-05-27T11:00:00+08:00']
+    assert_includes rows, ['release_pgyer', 1, 1, 0, '100%', 'success', '2026-05-27T12:00:00+08:00']
+  end
+
+  def test_skill_runtime_stats_are_empty_without_history
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+    end.new(@project_dir)
+
+    assert_equal [], helper.podx_skill_stats_rows
+  end
+
+  def test_skill_runtime_reports_governance_summary
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          stage: 依赖治理
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+    YAML
+    File.write(File.join(@project_dir, '.podx', 'skill_runs.yml'), {
+      'runs' => [
+        {
+          'skill' => 'local_dependency_audit',
+          'source' => '项目',
+          'status' => 'success',
+          'started_at' => '2026-05-27T10:00:00+08:00',
+          'duration' => '1.00s',
+          'detail' => '完成'
+        },
+        {
+          'skill' => 'local_dependency_audit',
+          'source' => '项目',
+          'status' => 'failed',
+          'started_at' => '2026-05-27T11:00:00+08:00',
+          'duration' => '1.00s',
+          'detail' => '失败'
+        }
+      ]
+    }.to_yaml)
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'release/5.14.2'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_report_rows
+
+    assert_includes rows, ['技能数量', 'ok', '7 个']
+    assert_includes rows, ['项目技能库', 'ok', File.join(@project_dir, '.podx', 'skills.yml')]
+    assert_includes rows, ['运行历史', 'ok', '2 次']
+    assert_includes rows, ['总体成功率', 'ok', '50% (1/2)']
+  end
+
+  def test_skill_runtime_report_fails_on_lint_failure
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: dependency_audit
+          scene: 重名技能
+          steps:
+            - podx deps
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def print_box_table(_title, _headers, _rows); end
+    end.new(@project_dir)
+
+    error = assert_raises(Pod::Informative) { helper.report_podx_skills }
+
+    assert_includes error.message, 'skill report 检测到 lint 失败'
+  end
+
+  def test_skill_runtime_suggests_next_actions_without_project_skill_file
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'develop'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_suggestion_rows
+
+    assert_includes rows, ['初始化项目技能库', 'podx skill init', '生成 .podx/skills.yml，开始沉淀团队流程']
+    assert_includes rows, ['建立运行基线', 'podx skill run dependency_audit', '暂无技能运行历史，建议先跑一次依赖巡检']
+  end
+
+  def test_skill_runtime_suggests_review_when_success_rate_is_low
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          stage: 依赖治理
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+    YAML
+    File.write(File.join(@project_dir, '.podx', 'skill_runs.yml'), {
+      'runs' => [
+        { 'skill' => 'local_dependency_audit', 'status' => 'success', 'started_at' => '2026-05-27T10:00:00+08:00' },
+        { 'skill' => 'local_dependency_audit', 'status' => 'failed', 'started_at' => '2026-05-27T11:00:00+08:00' },
+        { 'skill' => 'local_dependency_audit', 'status' => 'failed', 'started_at' => '2026-05-27T12:00:00+08:00' }
+      ]
+    }.to_yaml)
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'release/5.14.2'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_suggestion_rows
+
+    assert_includes rows, ['复盘失败技能', 'podx skill history 20', '总体成功率 33% (1/3)，建议沉淀修复经验']
+  end
+
+  def test_skill_runtime_builds_markdown_snapshot
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          stage: 依赖治理
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'release/5.14.2'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+    end.new(@project_dir)
+
+    markdown = helper.podx_skill_snapshot_markdown
+
+    assert_includes markdown, '# podx skill snapshot'
+    assert_includes markdown, '## Governance Report'
+    assert_includes markdown, '## Suggestions'
+    assert_includes markdown, '## Lint'
+    assert_includes markdown, '## Skill Catalog'
+    assert_includes markdown, '| Skill | 来源 | 阶段 | 场景 | 依赖 | 入口 | 验证 |'
+    assert_includes markdown, 'local_dependency_audit'
+  end
+
+  def test_skill_runtime_writes_markdown_snapshot
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def print_box_table(_title, _headers, _rows); end
+    end.new(@project_dir)
+
+    helper.snapshot_podx_skills
+    path = File.join(@project_dir, '.podx', 'skill_snapshot.md')
+
+    assert File.exist?(path)
+    assert_includes File.read(path), '# podx skill snapshot'
+  end
+
+  def test_skill_runtime_ci_rows_include_lint_report_and_snapshot
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, 'Podfile.lock'), "PODS:\n  - Alamofire (5.8.0)\n")
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          stage: 依赖治理
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'release/5.14.2'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+    end.new(@project_dir)
+
+    rows = helper.podx_skill_ci_rows
+
+    assert_includes rows, ['mode', 'ok', 'default']
+    assert_includes rows, ['lint', 'ok', 'fail 0, warn 0']
+    assert_includes rows, ['report', 'warn', '6 项']
+    assert_includes rows, ['snapshot', 'ok', File.join(@project_dir, '.podx', 'skill_snapshot.md')]
+  end
+
+  def test_skill_runtime_ci_writes_snapshot_before_failing_on_lint_error
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: dependency_audit
+          scene: 重名技能
+          steps:
+            - podx deps
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def print_box_table(_title, _headers, _rows); end
+    end.new(@project_dir)
+
+    error = assert_raises(Pod::Informative) { helper.ci_podx_skills }
+    path = File.join(@project_dir, '.podx', 'skill_snapshot.md')
+
+    assert_includes error.message, 'skill ci 检测失败'
+    assert File.exist?(path)
+    assert File.exist?(File.join(@project_dir, '.podx', 'skill_ci.json'))
+    assert_includes File.read(path), 'skill 名称重复：dependency_audit'
+  end
+
+  def test_skill_runtime_ci_writes_machine_readable_json_report
+    FileUtils.mkdir_p(File.join(@project_dir, '.podx'))
+    File.write(File.join(@project_dir, 'Podfile.lock'), "PODS:\n  - Alamofire (5.8.0)\n")
+    File.write(File.join(@project_dir, '.podx', 'skills.yml'), <<~YAML)
+      skills:
+        - name: local_dependency_audit
+          stage: 依赖治理
+          scene: 本地依赖巡检
+          steps:
+            - podx deps
+    YAML
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def main_app_branch
+        'release/5.14.2'
+      end
+
+      def selected_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
+      end
+
+      def print_box_table(_title, _headers, _rows); end
+    end.new(@project_dir)
+
+    helper.ci_podx_skills
+    payload = JSON.parse(File.read(File.join(@project_dir, '.podx', 'skill_ci.json')))
+
+    assert_equal @project_dir, payload['project']
+    assert_equal File.join(@project_dir, '.podx', 'skill_snapshot.md'), payload['snapshot_path']
+    assert_equal File.join(@project_dir, '.podx', 'skill_ci.json'), payload['json_path']
+    assert_equal false, payload['strict']
+    assert_equal 'warn', payload['status']
+    assert_includes payload['summary'], { 'step' => 'mode', 'status' => 'ok', 'detail' => 'default' }
+    assert_includes payload['summary'], { 'step' => 'lint', 'status' => 'ok', 'detail' => 'fail 0, warn 0' }
+    assert payload['lint'].any? { |row| row['rule'] == 'name' && row['status'] == 'ok' }
+    assert payload['skills'].any? { |row| row['name'] == 'local_dependency_audit' && row['source'] == '项目' }
+  end
+
+  def test_skill_runtime_ci_strict_fails_on_report_failure
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def print_box_table(_title, _headers, _rows); end
+    end.new(@project_dir)
+
+    error = assert_raises(Pod::Informative) { helper.ci_podx_skills('strict') }
+    payload = JSON.parse(File.read(File.join(@project_dir, '.podx', 'skill_ci.json')))
+
+    assert_includes error.message, 'skill ci strict 检测失败'
+    assert_equal true, payload['strict']
+    assert_equal 'fail', payload['status']
+    assert_includes payload['summary'], { 'step' => 'mode', 'status' => 'ok', 'detail' => 'strict' }
+  end
+
+  def test_skill_runtime_ci_rejects_unknown_mode
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+      end
+
+      def project_directory
+        @project_directory
+      end
+    end.new(@project_dir)
+
+    error = assert_raises(Pod::Informative) { helper.ci_podx_skills('loud') }
+
+    assert_includes error.message, '未知 skill ci 模式'
+  end
+
+  def test_skill_runtime_does_not_record_dry_run
+    File.write(File.join(@project_dir, 'Podfile.lock'), "PODS:\n  - Alamofire (5.8.0)\n")
+    helper = Class.new do
+      include CocoapodsPodx::Commands::SkillRuntime
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+        @dry_run = true
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def podfile_path
+        File.join(@project_directory, 'Podfile')
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+
+      def show_dependency_report; end
+
+      def doctor_overlay(_entries); end
+
+      def print_box_table(_title, _headers, _rows); end
+    end.new(@project_dir)
+
+    helper.run_podx_skill('dependency_audit', [])
+
+    refute File.exist?(File.join(@project_dir, '.podx', 'skill_runs.yml'))
+  end
+
   def test_project_config_exposes_publish_settings
     config = CocoapodsPodx::Runtime.config
 
     assert_equal '.mgit-publish', config[:publish_work_dir]
     assert_equal 'develop', config[:publish_base_branch]
+    assert_equal false, config[:publish_pipeline_gate]
     assert_equal 'nnios', config[:publish_main_repo]
     assert_equal true, config[:publish_update_podfile_branch]
     assert_equal ['nnios', 'nnbusscom'], config[:publish_repos]
@@ -198,6 +1284,26 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx upgrade [VERSION]'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'podx uninstall                 '
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx list'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx rules'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx rules check'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx rules sync'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx rules snapshot'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx rules ci'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline flow'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline ci'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline script'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline doctor'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline snapshot'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline report'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline status'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline gate'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline policy'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline readiness'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --pipeline-gate'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --no-pipeline-gate'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --rules'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --pipeline'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx ai init'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish log [BUILD]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish history [N]'
@@ -205,6 +1311,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish fix [BUILD]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'cocoapods_podx/publish_only'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx hooks install'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx skill ci'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --dry-run --hooks'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_gem_home'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_ruby'
@@ -271,10 +1378,36 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes File.read(File.join(ai_dir, '.gitignore')), '# AI / MCP local runtime state'
     assert_includes File.read(File.join(ai_dir, '.gitignore')), '.claude/memory/MEMORY.md'
     assert_includes File.read(File.join(ai_dir, '.gitignore')), '.claude/mcps/.env'
+    assert_includes File.read(File.join(ai_dir, '.gitignore')), '.mgit-publish/'
+    assert_includes File.read(File.join(ai_dir, '.gitignore')), 'Development Pods/'
+    assert_includes File.read(File.join(ai_dir, '.gitignore')), '.podx/skill_runs.yml'
+    assert_includes File.read(File.join(ai_dir, '.gitignore')), '.podx/skill_snapshot.md'
+    assert_includes File.read(File.join(ai_dir, '.gitignore')), '.podx/skill_ci.json'
     assert_includes File.read(File.join(ai_dir, '.claude', 'mcps', 'codex-mcp.example.toml')), 'code-review-graph'
     assert_includes File.read(File.join(ai_dir, '.claude', 'mcps', 'claude-mcp.example.json')), 'code-review-graph'
     assert_includes File.read(File.join(ai_dir, '.claude', 'mcps', 'README.md')), 'Hermes'
     assert_includes File.read(File.join(ai_dir, '.claude', 'memory', 'README.md')), 'Hermes Memory'
+  ensure
+    FileUtils.rm_rf(ai_dir) if ai_dir
+  end
+
+  def test_ai_bootstrap_gitignore_appends_new_runtime_rules_to_existing_marker
+    ai_dir = Dir.mktmpdir('cocoapods-podx-ai-existing-gitignore')
+    File.write(File.join(ai_dir, '.gitignore'), <<~TEXT)
+      # AI / MCP local runtime state
+      .hermes
+      .claude/memory/MEMORY.md
+    TEXT
+
+    CocoapodsPodx::AiBootstrap.ensure_gitignore(ai_dir)
+    gitignore = File.read(File.join(ai_dir, '.gitignore'))
+
+    assert_equal 1, gitignore.scan(/^\.hermes$/).size
+    assert_includes gitignore, '.mgit-publish/'
+    assert_includes gitignore, 'Development Pods/'
+    assert_includes gitignore, '.podx/skill_runs.yml'
+    assert_includes gitignore, '.podx/skill_snapshot.md'
+    assert_includes gitignore, '.podx/skill_ci.json'
   ensure
     FileUtils.rm_rf(ai_dir) if ai_dir
   end
@@ -1314,6 +2447,208 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
+  def test_publish_pipeline_gate_blocks_jenkins_trigger_when_enabled
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::PipelineRuntime
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_reader :triggered
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+        @pod_names = []
+        @dry_run = false
+        @publish_pipeline_gate = true
+        @triggered = false
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def validate_jenkins_publish_context!; end
+
+      def pipeline_status_rows
+        [['规则门禁', '失败', File.join(project_directory, '.podx', 'rules_snapshot.json')]]
+      end
+
+      def jenkins_publish_job_profile
+        { default_channel: 'tf' }
+      end
+
+      def jenkins_deploy_target(_channel)
+        { name: 'TestFlight', value: 'TestFlight,', kind: :app }
+      end
+
+      def validate_jenkins_publish_target!(*); end
+
+      def validate_jenkins_publish_branch!(*); end
+
+      def jenkins_publish_branch
+        'origin/release/5.14.3'
+      end
+
+      def trigger_jenkins_build_with_auto_fix_retry(*)
+        @triggered = true
+      end
+    end.new(@project_dir)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      error = assert_raises(Pod::Informative) { publisher.publish_to_jenkins }
+      assert_includes error.message, '发布预检失败'
+    end
+
+    refute publisher.triggered
+    assert_includes output, '【publish pipeline gate】'
+    assert_includes output, '【发布预检】TestFlight 严格门禁 失败 1 个'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_publish_pipeline_gate_warns_for_pgyer_and_continues
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::PipelineRuntime
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_reader :triggered
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+        @pod_names = []
+        @dry_run = false
+        @publish_pipeline_gate = true
+        @triggered = false
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def validate_jenkins_publish_context!; end
+
+      def pipeline_status_rows
+        [['规则门禁', '失败', File.join(project_directory, '.podx', 'rules_snapshot.json')]]
+      end
+
+      def jenkins_publish_job_profile
+        { default_channel: 'pgyer' }
+      end
+
+      def jenkins_deploy_target(_channel)
+        { name: '蒲公英', value: 'Pgyer,', kind: :app }
+      end
+
+      def validate_jenkins_publish_target!(*); end
+
+      def validate_jenkins_publish_branch!(*); end
+
+      def jenkins_publish_branch
+        'origin/develop'
+      end
+
+      def print_publish_header(*); end
+
+      def publish_git_rows(_branch)
+        []
+      end
+
+      def print_publish_git_table(_rows); end
+
+      def validate_publish_remote_release_branches!(*); end
+
+      def jenkins_build_params(*)
+        {}
+      end
+
+      def print_jenkins_progress(_message); end
+
+      def trigger_jenkins_build_with_auto_fix_retry(*)
+        @triggered = true
+      end
+    end.new(@project_dir)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      publisher.publish_to_jenkins
+    end
+
+    assert publisher.triggered
+    assert_includes output, '【发布预检】蒲公英 告警门禁 失败 1 个'
+    assert_includes output, '【发布预检】告警模式，继续发布'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_publish_pipeline_gate_can_be_skipped
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::PipelineRuntime
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_reader :triggered
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+        @pod_names = []
+        @dry_run = false
+        @publish_pipeline_gate = true
+        @skip_publish_pipeline_gate = true
+        @triggered = false
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def validate_jenkins_publish_context!; end
+
+      def jenkins_publish_job_profile
+        { default_channel: 'pgyer' }
+      end
+
+      def jenkins_deploy_target(_channel)
+        { name: '蒲公英', value: 'Pgyer,', kind: :app }
+      end
+
+      def validate_jenkins_publish_target!(*); end
+
+      def validate_jenkins_publish_branch!(*); end
+
+      def jenkins_publish_branch
+        'origin/develop'
+      end
+
+      def print_publish_header(*); end
+
+      def publish_git_rows(_branch)
+        []
+      end
+
+      def print_publish_git_table(_rows); end
+
+      def validate_publish_remote_release_branches!(*); end
+
+      def jenkins_build_params(*)
+        {}
+      end
+
+      def print_jenkins_progress(_message); end
+
+      def trigger_jenkins_build_with_auto_fix_retry(*)
+        @triggered = true
+      end
+    end.new(@project_dir)
+
+    publisher.publish_to_jenkins
+
+    assert publisher.triggered
+  end
+
   def test_jenkins_build_fallback_progress_only_says_switch_when_next_url_exists
     publisher = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
@@ -2266,12 +3601,509 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_includes rows, ['发布分支', '配置', 'develop->release/x.x.x', 'mgit publish']
     assert_includes rows, ['合并保护', '默认', '还原Podfile.rb', 'pull/merge']
+    assert_includes rows, ['本地产物', '默认', '.mgit-publish/, Development Pods/, .podx/skill_runs.yml, .podx/skill_snapshot.md, .podx/skill_ci.json, .podx/rules_snapshot.json, .podx/pipeline_snapshot.json, .podx/pipeline_report.md', '.gitignore']
     assert_includes rows, ['Podfile分支', '配置', '组件branch->发布分支', 'mgit publish']
     assert_includes rows, ['iOS版本', '配置', '改Version/Build', 'mgit publish']
     refute rows.any? { |row| row.first == 'iOS Build' }
     assert_includes rows, ['发布渠道', '内置', 'tf/app仅release', 'podx publish']
   ensure
     FileUtils.rm_rf(config_dir) if config_dir
+  end
+
+  def test_rules_local_artifacts_use_configured_publish_work_dir
+    config_dir = Dir.mktmpdir('cocoapods-podx-local-artifacts')
+    config_path = File.join(config_dir, 'podx.config.yml')
+    File.write(config_path, <<~YAML)
+      publish_work_dir: .release-work
+    YAML
+
+    rules = CocoapodsPodx::Rules.local_artifact_gitignore_rules(config_path: config_path)
+
+    assert_equal ['.release-work/', 'Development Pods/', '.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], rules
+  ensure
+    FileUtils.rm_rf(config_dir) if config_dir
+  end
+
+  def test_rules_local_artifacts_detect_missing_gitignore_rules
+    rule = CocoapodsPodx::Rules.engine(config_path: '/tmp/missing-podx-config.yml').local_artifacts
+
+    missing = rule.missing_gitignore_rules(".mgit-publish/\nDevelopment Pods/\n")
+
+    assert_equal ['.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], missing
+  end
+
+  def test_podx_rules_check_fails_when_gitignore_is_missing_rules
+    project_dir = Dir.mktmpdir('cocoapods-podx-rules-check')
+    File.write(File.join(project_dir, '.gitignore'), ".mgit-publish/\n")
+    helper = rules_command_helper(project_dir)
+
+    error = assert_raises(Pod::Informative) { helper.check_podx_rules }
+
+    assert_includes error.message, 'rules check 失败'
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_podx_rules_sync_writes_missing_gitignore_rules
+    project_dir = Dir.mktmpdir('cocoapods-podx-rules-sync')
+    File.write(File.join(project_dir, '.gitignore'), ".mgit-publish/\n")
+    helper = rules_command_helper(project_dir)
+
+    helper.sync_podx_rules
+    content = File.read(File.join(project_dir, '.gitignore'))
+
+    assert_includes content, '.mgit-publish/'
+    assert_includes content, 'Development Pods/'
+    assert_includes content, '.podx/skill_runs.yml'
+    assert_includes content, '.podx/skill_snapshot.md'
+    assert_includes content, '.podx/skill_ci.json'
+    assert_includes content, '.podx/rules_snapshot.json'
+    assert_includes content, '.podx/pipeline_snapshot.json'
+    assert_includes content, '.podx/pipeline_report.md'
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_podx_rules_snapshot_writes_json_payload
+    project_dir = Dir.mktmpdir('cocoapods-podx-rules-snapshot')
+    File.write(File.join(project_dir, '.gitignore'), ".mgit-publish/\n")
+    helper = rules_command_helper(project_dir)
+
+    helper.snapshot_podx_rules
+    payload = JSON.parse(File.read(File.join(project_dir, '.podx', 'rules_snapshot.json')))
+
+    assert_equal 'fail', payload['status']
+    assert_includes payload['missing_gitignore_rules'], 'Development Pods/'
+    assert payload['summaries'].any? { |row| row['rule'] == '本地产物' }
+    assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/rules_snapshot.json' }
+    assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/pipeline_snapshot.json' }
+    assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/pipeline_report.md' }
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_podx_rules_ci_fails_and_writes_snapshot_when_rules_missing
+    project_dir = Dir.mktmpdir('cocoapods-podx-rules-ci')
+    File.write(File.join(project_dir, '.gitignore'), ".mgit-publish/\n")
+    helper = rules_command_helper(project_dir)
+
+    error = assert_raises(Pod::Informative) { helper.ci_podx_rules }
+    payload = JSON.parse(File.read(File.join(project_dir, '.podx', 'rules_snapshot.json')))
+
+    assert_includes error.message, 'rules ci 失败'
+    assert_equal 'fail', payload['status']
+    assert_operator payload['missing_count'], :>, 0
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_podx_rules_ci_passes_when_gitignore_has_all_rules
+    project_dir = Dir.mktmpdir('cocoapods-podx-rules-ci-pass')
+    rules = CocoapodsPodx::Rules.local_artifact_gitignore_rules(config_path: File.join(project_dir, 'podx.config.yml'))
+    File.write(File.join(project_dir, '.gitignore'), "#{rules.join("\n")}\n")
+    helper = rules_command_helper(project_dir)
+
+    helper.ci_podx_rules
+    payload = JSON.parse(File.read(File.join(project_dir, '.podx', 'rules_snapshot.json')))
+
+    assert_equal 'pass', payload['status']
+    assert_equal 0, payload['missing_count']
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_outputs_ci_cd_capability_map
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::PipelineRuntime
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.show_pipeline_map
+    end
+
+    assert_includes output, '【pipeline 能力地图】'
+    assert_includes output, 'podx rules ci'
+    assert_includes output, 'podx skill ci strict'
+    assert_includes output, 'mgit publish release/x.x.x'
+    assert_includes output, 'podx publish doctor'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_pipeline_runtime_outputs_ci_template
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::PipelineRuntime
+
+      def initialize
+        @pod_names = ['ci']
+      end
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.show_pipeline_map
+    end
+
+    assert_includes output, '【pipeline ci 模板】'
+    assert_includes output, 'podx rules ci'
+    assert_includes output, 'podx skill ci strict'
+    assert_includes output, 'podx graph'
+    assert_includes output, 'podx pipeline snapshot'
+    assert_includes output, 'podx pipeline report'
+    assert_includes output, 'podx pipeline gate'
+    assert_includes output, '执行 podx rules sync 后重新检查'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_pipeline_runtime_outputs_main_flow
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::PipelineRuntime
+
+      def initialize
+        @pod_names = ['flow']
+      end
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.show_pipeline_map
+    end
+
+    assert_includes output, '【pipeline 主流程】'
+    assert_includes output, '开发主流程'
+    assert_includes output, '发布主流程'
+    assert_includes output, 'podx install / podx update NAME'
+    assert_includes output, 'podx publish [pgyer|tf|app]'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_pipeline_runtime_policy_outputs_effective_publish_gate_strategy
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-policy')
+    File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
+      publish_pipeline_gate: true
+      publish_pipeline_gate_strategy:
+        pgyer: warn
+        testflight: strict
+        appstore: strict
+        framework: off
+    YAML
+    helper = pipeline_runtime_helper(project_dir, ['policy'])
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.show_pipeline_map
+    end
+
+    assert_includes output, '【pipeline policy】'
+    assert_match(/\| 蒲公英\s+\| warn/, output)
+    assert_includes output, '| TestFlight | strict'
+    assert_includes output, '| AppStore   | strict'
+    assert_includes output, '| Framework  | off'
+    assert_includes output, '告警继续'
+    assert_includes output, '失败阻断'
+    assert_includes output, '不预检'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_policy_is_off_when_publish_gate_disabled
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-policy-off')
+    File.write(File.join(project_dir, 'podx.config.yml'), "publish_pipeline_gate: false\n")
+    helper = pipeline_runtime_helper(project_dir, ['policy'])
+
+    rows = helper.pipeline_policy_rows
+
+    assert rows.all? { |row| row[1] == 'off' }
+    assert rows.all? { |row| row[3] == '不预检' }
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_readiness_combines_policy_and_gate_status
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-readiness')
+    File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
+      publish_pipeline_gate: true
+      publish_pipeline_gate_strategy:
+        pgyer: warn
+        testflight: strict
+        appstore: strict
+        framework: off
+    YAML
+    helper = pipeline_runtime_helper(project_dir, ['readiness'])
+
+    def helper.pipeline_status_rows
+      [['规则门禁', '失败', File.join(project_directory, '.podx', 'rules_snapshot.json')]]
+    end
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.show_pipeline_map
+    end
+
+    assert_includes output, '【pipeline readiness】'
+    assert_match(/\| 蒲公英\s+\| warn\s+\| 可发布\s+\| 告警 1 个/, output)
+    assert_includes output, '| TestFlight | strict | 阻断'
+    assert_includes output, '| AppStore   | strict | 阻断'
+    assert_includes output, '| Framework  | off    | 可发布'
+    assert_includes output, '未开启预检'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_readiness_allows_strict_channels_when_gate_passes
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-readiness-pass')
+    File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
+      publish_pipeline_gate: true
+    YAML
+    helper = pipeline_runtime_helper(project_dir, ['readiness'])
+
+    def helper.pipeline_status_rows
+      [['规则门禁', '通过', File.join(project_directory, '.podx', 'rules_snapshot.json')]]
+    end
+
+    rows = helper.pipeline_readiness_rows
+
+    assert rows.all? { |row| row[2] == '可发布' }
+    assert rows.any? { |row| row[0] == 'TestFlight' && row[3] == '预检通过' }
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_writes_ci_script
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-script')
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::PipelineRuntime
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+        @pod_names = ['script']
+      end
+
+      def project_directory
+        @project_directory
+      end
+    end.new(project_dir)
+
+    helper.show_pipeline_map
+    path = File.join(project_dir, '.podx', 'pipeline_ci.sh')
+    content = File.read(path)
+
+    assert File.executable?(path)
+    assert_includes content, '#!/bin/sh'
+    assert_includes content, 'set -e'
+    assert_includes content, 'podx rules ci'
+    assert_includes content, 'podx skill ci strict'
+    assert_includes content, 'podx graph'
+    assert_includes content, 'podx pipeline snapshot'
+    assert_includes content, 'podx pipeline report'
+    assert_includes content, 'podx pipeline gate'
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_doctor_passes_when_script_matches_template
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-doctor-pass')
+    helper = pipeline_runtime_helper(project_dir, ['script'])
+    helper.show_pipeline_map
+
+    helper = pipeline_runtime_helper(project_dir, ['doctor'])
+    helper.show_pipeline_map
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_doctor_fails_when_script_is_missing
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-doctor-fail')
+    helper = pipeline_runtime_helper(project_dir, ['doctor'])
+
+    error = assert_raises(Pod::Informative) { helper.show_pipeline_map }
+
+    assert_includes error.message, 'pipeline doctor 失败'
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_snapshot_writes_json_payload
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-snapshot')
+    helper = pipeline_runtime_helper(project_dir, ['script'])
+    helper.show_pipeline_map
+
+    helper = pipeline_runtime_helper(project_dir, ['snapshot'])
+    helper.show_pipeline_map
+    payload = JSON.parse(File.read(File.join(project_dir, '.podx', 'pipeline_snapshot.json')))
+
+    assert_equal 'pass', payload['status']
+    assert_equal File.join(project_dir, '.podx', 'pipeline_ci.sh'), payload['script_path']
+    assert_equal File.join(project_dir, '.podx', 'pipeline_snapshot.json'), payload['snapshot_path']
+    assert payload['stages'].any? { |row| row['command'] == 'podx publish doctor' }
+    assert payload['main_flows'].any? { |row| row['flow'] == '开发主流程' && row['command'] == 'mgit status' }
+    assert payload['main_flows'].any? { |row| row['flow'] == '发布主流程' && row['command'] == 'podx publish [pgyer|tf|app]' }
+    assert payload['ci_steps'].any? { |row| row['command'] == 'podx rules ci' }
+    assert payload['ci_steps'].any? { |row| row['command'] == 'podx pipeline gate' }
+    assert payload['doctor'].all? { |row| row['status'] == '通过' }
+    assert payload['policy'].any? { |row| row['channel'] == 'TestFlight' && row['branch_rule'] == 'release/x.x.x' }
+    assert payload['readiness'].any? { |row| row['channel'] == 'TestFlight' && row['readiness'] == '可发布' }
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_report_writes_markdown
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-report')
+    helper = pipeline_runtime_helper(project_dir, ['script'])
+    helper.show_pipeline_map
+
+    helper = pipeline_runtime_helper(project_dir, ['report'])
+    helper.show_pipeline_map
+    markdown = File.read(File.join(project_dir, '.podx', 'pipeline_report.md'))
+
+    assert_includes markdown, '# podx pipeline report'
+    assert_includes markdown, '- status: pass'
+    assert_includes markdown, '## Main Flow'
+    assert_includes markdown, '开发主流程'
+    assert_includes markdown, '发布主流程'
+    assert_includes markdown, '## CI Steps'
+    assert_includes markdown, 'podx rules ci'
+    assert_includes markdown, 'podx pipeline gate'
+    assert_includes markdown, '## Doctor'
+    assert_includes markdown, '脚本内容'
+    assert_includes markdown, '## Publish Policy'
+    assert_includes markdown, 'TestFlight'
+    assert_includes markdown, 'release/x.x.x'
+    assert_includes markdown, '## Publish Readiness'
+    assert_includes markdown, '可发布'
+    assert_includes markdown, '## Capability Map'
+    assert_includes markdown, 'podx publish doctor'
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_status_summarizes_artifacts
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-status')
+    FileUtils.mkdir_p(File.join(project_dir, '.podx'))
+    File.write(File.join(project_dir, '.podx', 'rules_snapshot.json'), JSON.pretty_generate({ status: 'pass' }))
+    File.write(File.join(project_dir, '.podx', 'skill_ci.json'), JSON.pretty_generate({ status: 'fail' }))
+    File.write(File.join(project_dir, '.podx', 'pipeline_snapshot.json'), JSON.pretty_generate({ status: 'pass' }))
+    File.write(File.join(project_dir, '.podx', 'pipeline_report.md'), '# report')
+    helper = pipeline_runtime_helper(project_dir, ['status'])
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.show_pipeline_map
+    end
+
+    assert_includes output, '【pipeline status】'
+    assert_includes output, '| 规则门禁 | 通过'
+    assert_includes output, '| 技能门禁 | 失败'
+    assert_includes output, '| 流程快照 | 通过'
+    assert_includes output, '| 流程报告 | 通过'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_status_marks_missing_artifacts
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-status-missing')
+    helper = pipeline_runtime_helper(project_dir, ['status'])
+
+    rows = helper.pipeline_status_rows
+
+    assert rows.all? { |row| row[1] == '缺失' }
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_gate_passes_when_all_artifacts_pass
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-gate-pass')
+    FileUtils.mkdir_p(File.join(project_dir, '.podx'))
+    File.write(File.join(project_dir, '.podx', 'rules_snapshot.json'), JSON.pretty_generate({ status: 'pass' }))
+    File.write(File.join(project_dir, '.podx', 'skill_ci.json'), JSON.pretty_generate({ status: 'pass' }))
+    File.write(File.join(project_dir, '.podx', 'pipeline_snapshot.json'), JSON.pretty_generate({ status: 'pass' }))
+    File.write(File.join(project_dir, '.podx', 'pipeline_report.md'), '# report')
+    helper = pipeline_runtime_helper(project_dir, ['gate'])
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.show_pipeline_map
+    end
+
+    assert_includes output, '【pipeline gate】'
+    assert_includes output, '| 规则门禁 | 通过 | 可继续'
+    assert_includes output, '【pipeline gate】通过'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_pipeline_runtime_gate_fails_with_actionable_suggestion
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-gate-fail')
+    FileUtils.mkdir_p(File.join(project_dir, '.podx'))
+    File.write(File.join(project_dir, '.podx', 'rules_snapshot.json'), JSON.pretty_generate({ status: 'fail' }))
+    helper = pipeline_runtime_helper(project_dir, ['gate'])
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      error = assert_raises(Pod::Informative) { helper.show_pipeline_map }
+      assert_includes error.message, 'pipeline gate 失败'
+    end
+
+    assert_includes output, '| 规则门禁 | 失败 | 执行 podx rules sync && podx rules ci'
+    assert_includes output, '| 技能门禁 | 缺失 | 执行 podx skill init 或 podx skill ci strict'
+    assert_includes output, '【pipeline gate】失败'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def pipeline_runtime_helper(project_dir, pod_names)
+    Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::PipelineRuntime
+
+      def initialize(project_dir, pod_names)
+        @project_directory = project_dir
+        @pod_names = pod_names
+      end
+
+      def project_directory
+        @project_directory
+      end
+    end.new(project_dir, pod_names)
+  end
+
+  def rules_command_helper(project_dir)
+    Class.new do
+      include CocoapodsPodx::Commands::GitActions
+      include CocoapodsPodx::Commands::GitHooks
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def config_path
+        File.join(@project_directory, 'podx.config.yml')
+      end
+    end.new(project_dir)
   end
 
   def test_mgit_publish_allows_protected_file_commit_only_inside_publish_commit

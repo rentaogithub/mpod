@@ -23,6 +23,7 @@ module CocoapodsPodx
           target = jenkins_deploy_target(channel)
           validate_jenkins_publish_target!(job_profile, target)
           validate_jenkins_publish_branch!(branch, target)
+          run_publish_pipeline_gate_if_needed!(target)
 
           print_publish_header(branch, target)
           rows = publish_git_rows(branch)
@@ -61,6 +62,96 @@ module CocoapodsPodx
 
         print_publish_overlay_sync_table(rows)
         raise Pod::Informative, "发布成功后本地组件切换发布分支失败：\n#{failures.join("\n")}" if failures.any?
+      end
+
+      def run_publish_pipeline_gate_if_needed!(target)
+        mode = publish_pipeline_gate_mode(target)
+        return if mode == 'off'
+        raise Pod::Informative, '当前环境不支持 pipeline gate，请在 Podfile 工程中执行 podx publish，或使用 --no-pipeline-gate 跳过。' unless respond_to?(:pipeline_gate_rows, true)
+
+        rows = pipeline_gate_rows
+        git_action_print_table('publish pipeline gate', %w[维度 状态 建议], rows)
+        failures = rows.select { |row| row[1] != '通过' }
+        channel = target[:name].to_s
+        Pod::UI.puts "【发布预检】#{channel} #{publish_pipeline_gate_mode_label(mode)} #{failures.empty? ? '通过' : "失败 #{failures.size} 个"}"
+        return if failures.empty?
+        return Pod::UI.puts('【发布预检】告警模式，继续发布') if mode == 'warn'
+
+        raise Pod::Informative, '发布预检失败，请按建议修复后重试；如需临时跳过，请使用 --no-pipeline-gate。'
+      end
+
+      def publish_pipeline_gate_mode(target)
+        return 'off' if @skip_publish_pipeline_gate
+        return publish_pipeline_gate_strategy_mode(target) if @publish_pipeline_gate
+        return publish_pipeline_gate_strategy_mode(target) if ENV['COCOAPODS_PODX_PUBLISH_PIPELINE_GATE'].to_s == '1'
+
+        value = jenkins_project_config[:publish_pipeline_gate]
+        return 'off' unless value == true || value.to_s == 'true' || value.to_s == '1'
+
+        publish_pipeline_gate_strategy_mode(target)
+      rescue
+        'off'
+      end
+
+      def publish_pipeline_gate_strategy_mode(target)
+        configured = publish_pipeline_gate_strategy[target_key_for_gate_strategy(target)]
+        mode = configured.to_s.strip.downcase
+        return mode if %w[off warn strict].include?(mode)
+
+        default_publish_pipeline_gate_strategy[target_key_for_gate_strategy(target)]
+      end
+
+      def publish_pipeline_gate_strategy
+        raw = jenkins_project_config[:publish_pipeline_gate_strategy]
+        raw = {} unless raw.is_a?(Hash)
+        raw.each_with_object({}) do |(key, value), memo|
+          memo[key.to_s.strip.downcase] = value
+        end
+      end
+
+      def default_publish_pipeline_gate_strategy
+        {
+          'pgyer' => 'warn',
+          'testflight' => 'strict',
+          'appstore' => 'strict',
+          'framework' => 'warn'
+        }
+      end
+
+      def target_key_for_gate_strategy(target)
+        value = target[:value].to_s
+        return 'pgyer' if value.match?(/Pgyer/i)
+        return 'testflight' if value.match?(/TestFlight/i)
+        return 'appstore' if value.match?(/AppStore/i)
+        return 'framework' if target[:kind] == :framework
+
+        target[:name].to_s.downcase
+      end
+
+      def publish_pipeline_gate_mode_label(mode)
+        case mode
+        when 'strict'
+          '严格门禁'
+        when 'warn'
+          '告警门禁'
+        else
+          mode
+        end
+      end
+
+      def jenkins_project_config
+        return @jenkins_project_config if defined?(@jenkins_project_config)
+
+        @jenkins_project_config = begin
+          if defined?(CocoapodsPodx::Runtime)
+            CocoapodsPodx::Runtime.configure(project_directory: jenkins_project_directory) if CocoapodsPodx::Runtime.respond_to?(:configure)
+            CocoapodsPodx::Runtime.project_config
+          else
+            {}
+          end
+        rescue
+          {}
+        end
       end
 
       def print_publish_overlay_sync_table(rows)

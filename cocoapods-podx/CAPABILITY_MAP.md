@@ -61,7 +61,9 @@ flowchart TB
 
 | 能力分类 | 命令 | 说明 |
 | --- | --- | --- |
-| 官方 pod 命令 | `podx install`、`podx repo update`、`podx init`、`podx update NNBussCom` | 保持 CocoaPods 原生命令语义；`podx update` 会在命中本地 overlay 组件时先更新本地仓库 |
+| 官方 pod 命令 | `podx install`、`podx repo update`、`podx update NNBussCom` | 保持 CocoaPods 原生命令语义；`podx update` 会在命中本地 overlay 组件时先更新本地仓库 |
+| 工程初始化 | `podx init` | 先升级到远端最新插件，再一键初始化工程配置、团队规则、技能库、流程产物、AI 上下文和 Git hooks |
+| 团队基线同步 | `podx sync` | 先升级到远端最新插件，再把团队规则、skill、pipeline 和 AI 模板同步到当前工程 |
 | 本地/远端切换 | `podx NNBussCom`、`podx disable NNBussCom`、`podx disable` | 管理 `Podfile.overlay`，决定私有组件走本地源码还是远端仓库 |
 | Overlay 查询 | `podx`、`podx main`、`podx list`、`podx doctor`、`podx open --overlay` | 查看支持组件、主 Podfile 配置、本地/远端状态、健康检查和打开 overlay 文件 |
 | 打开工程 | `podx open` | 打开当前工程 `.xcworkspace` |

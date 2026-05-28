@@ -11,6 +11,10 @@ module CocoapodsPodx
         @commit_protection ||= CommitProtection.new(config: project_config)
       end
 
+      def local_artifacts
+        @local_artifacts ||= LocalArtifacts.new(config: project_config)
+      end
+
       def summaries
         @summaries ||= Summary.new(config: project_config).rows
       end
@@ -103,13 +107,58 @@ module CocoapodsPodx
       end
     end
 
+    class LocalArtifacts
+      DEVELOPMENT_PODS_DIR = 'Development Pods'.freeze
+      DEFAULT_PUBLISH_WORK_DIR = '.mgit-publish'.freeze
+      DEFAULT_PODX_RUNTIME_ARTIFACTS = %w[
+        .podx/skill_runs.yml
+        .podx/skill_snapshot.md
+        .podx/skill_ci.json
+        .podx/rules_snapshot.json
+        .podx/pipeline_snapshot.json
+        .podx/pipeline_report.md
+      ].freeze
+
+      attr_reader :config
+
+      def initialize(config:)
+        @config = config || {}
+      end
+
+      def gitignore_rules
+        ([publish_work_dir_rule, development_pods_rule] + DEFAULT_PODX_RUNTIME_ARTIFACTS).uniq
+      end
+
+      def summary_text
+        gitignore_rules.join(', ')
+      end
+
+      def missing_gitignore_rules(existing)
+        existing_lines = existing.to_s.lines.map(&:strip).reject(&:empty?)
+        gitignore_rules.reject { |rule| existing_lines.include?(rule) }
+      end
+
+      private
+
+      def publish_work_dir_rule
+        work_dir = config[:publish_work_dir].to_s.strip
+        work_dir = DEFAULT_PUBLISH_WORK_DIR if work_dir.empty?
+        work_dir = work_dir.sub(%r{\A\./}, '')
+        work_dir.end_with?('/') ? work_dir : "#{work_dir}/"
+      end
+
+      def development_pods_rule
+        "#{DEVELOPMENT_PODS_DIR}/"
+      end
+    end
+
     class Summary
       def initialize(config:)
         @config = config || {}
       end
 
       def rows
-        rows = [commit_protection_row, merge_protection_row]
+        rows = [commit_protection_row, merge_protection_row, local_artifacts_row]
         rows << publish_branch_row if publish_enabled?
         rows << publish_podfile_branch_row if update_podfile_branch?
         rows << publish_ios_project_version_row if ios_version_enabled?
@@ -138,6 +187,15 @@ module CocoapodsPodx
           rule.protected_files_source,
           "还原#{rule.protected_files.join(', ')}",
           'pull/merge'
+        ]
+      end
+
+      def local_artifacts_row
+        [
+          '本地产物',
+          '默认',
+          LocalArtifacts.new(config: config).summary_text,
+          '.gitignore'
         ]
       end
 
@@ -212,6 +270,10 @@ module CocoapodsPodx
     class << self
       def engine(config_path:)
         Engine.new(config_path: config_path)
+      end
+
+      def local_artifact_gitignore_rules(config_path:)
+        engine(config_path: config_path).local_artifacts.gitignore_rules
       end
     end
   end

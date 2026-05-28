@@ -1,100 +1,148 @@
 # cocoapods-podx
 
-`cocoapods-podx` 是面向工程协作的 AI 指令服务。它把依赖治理、多仓库 Git、发布触发、AI 辅助分析和团队规则沉淀到统一的 `podx` / `mgit` 命令体系中。
-
-CocoaPods 只是其中一类被托管的工程能力，文档重点放在完整工程流程和 AI 指令服务上。
+`cocoapods-podx` 是面向团队 iOS DevOps 的技能库与 skill runtime。它把依赖治理、多仓库 Git、发布触发、AI 辅助分析和团队规则沉淀为可执行、可校验、可复用的 `podx` / `mgit` 技能体系。
 
 ## 能力范围
 
-- `podx`：工程命令入口，覆盖依赖安装、overlay 本地/远端切换、工程诊断、打开工程、发布触发和 AI 初始化。
+- `podx`：团队 DevOps 技能入口，覆盖依赖安装、overlay 本地/远端切换、工程诊断、打开工程、发布触发和 AI 工程上下文。
+- `podx skill`：团队技能运行时，沉淀依赖巡检、发布检查、失败诊断、半自动修复等高频流程。
 - `mgit`：多仓库 Git 入口，覆盖 branch、status、diff、log、add、pull、push、commit、checkout、stash、publish。
 - `podx ai`：生成 Claude Code 项目结构，接入 CodeGraph / Code Review Graph，沉淀 rules、skills、agents、commands、mcps。
-- MCP：向 Codex 等 AI 客户端暴露受控的 `podx` / `mgit` 能力。
 - 安装脚本：安装、卸载、发布 gem，并生成 `podx` / `mgit` 命令。
 
 Hermes Agent 与 iOS DevOps 的组合方案见 [HERMES_IOS_DEVOPS.md](HERMES_IOS_DEVOPS.md)。
 
-## 设计目标
-
-- 不频繁修改主工程 `Podfile`，通过 `Podfile.overlay` 切换组件本地源码。
-- 官方 `pod` 语义保持可用，`podx install` / `podx update` 只在必要时增加工程前置处理。
-- 多仓库操作统一通过 `mgit` 执行，减少手工切分支、提交、拉取和发布分支的重复操作。
-- 发布命令只发布远端分支 HEAD，不发布本地未提交代码。
-- AI 配置统一放在 `.claude/` 下，形成团队一致的开发、测试、发布和评审规则。
-- 工程私有地址、账号、令牌、发布服务地址都应放在本地配置或环境变量中，不写入 README。
-
 ## 整体架构
 
 ```mermaid
-flowchart TB
-  User["开发者终端"] --> Podx["podx"]
-  User --> Mgit["mgit"]
-  Codex["Codex / MCP Client"] --> MCP["cocoapods-podx-mcp"]
-  MCP --> Podx
-  MCP --> Mgit
+flowchart LR
+  Entry["入口层<br/>开发者 / CI / AI -> podx / mgit"]
+  Install["安装分发<br/>script / gem / shim"]
 
-  Podx --> PodxBin["bin/podx"]
-  Mgit --> MgitBin["bin/mgit"]
-  PodxBin --> PodxCommand["Pod::Command::Podx"]
-  MgitBin --> MgitStandalone["MgitStandalone"]
+  DevFlow["开发主流程<br/>检查 / 依赖 / 多仓提交"]
+  ReleaseFlow["发布主流程<br/>release / 准入 / 诊断修复"]
 
-  PodxCommand --> Runtime["Runtime<br/>配置读取 / 依赖决策"]
-  PodxCommand --> OverlayFile["OverlayFile<br/>Podfile.overlay 读写"]
-  PodxCommand --> GitActions["GitActions<br/>组合 Git 操作"]
-  PodxCommand --> Rules["Rules<br/>团队规则器<br/>提交保护 / 发布约束"]
-  PodxCommand --> JenkinsPublish["JenkinsPublish<br/>Jenkins 打包发布<br/>打包自我修复能力"]
-  PodxCommand --> MgitPublish["MgitPublish<br/>多仓库发布分支"]
+  subgraph DomainColumn["能力域"]
+    direction TB
+    DependencyDomain["依赖治理<br/>Runtime / overlay / Deps"]
+    MultiRepoDomain["多仓协作<br/>GitActions / MgitPublish"]
+    RuleDomain["规则治理<br/>Rules / hooks / artifacts"]
+    SkillDomain["技能编排<br/>Skill / Runtime / history"]
+    PipelineDomain["流程编排<br/>status / gate / readiness"]
+    PublishDomain["发布执行<br/>JenkinsPublish / log"]
+  end
 
-  MgitStandalone --> GitActions
-  MgitStandalone --> Rules
-  MgitStandalone --> MgitPublish
+  subgraph ArtifactColumn["产物 / 外部系统"]
+    direction TB
+    DependencyArtifacts["依赖配置<br/>Podfile / overlay / Dev Pods"]
+    MultiRepoArtifacts["多仓状态<br/>branch / status / diff"]
+    RuleArtifacts["规则产物<br/>.gitignore / hooks"]
+    SkillArtifacts["技能产物<br/>skills.yml / skill report"]
+    PipelineArtifacts["流程 / AI 产物<br/>pipeline / codegraph"]
+    PublishArtifacts["发布系统<br/>Jenkins / logs"]
+  end
 
-  Runtime --> Podfile["Podfile<br/>内部组件声明"]
-  Runtime --> Config["podx.config.yml<br/>工程级配置"]
-  Runtime --> Overlay["Podfile.overlay<br/>本地组件开关"]
-  Runtime --> DevPods["Development Pods/<br/>本地组件仓库"]
+  Entry --> DevFlow
+  Entry --> ReleaseFlow
+  Install -.-> Entry
 
-  JenkinsPublish --> Jenkins["Jenkins<br/>打包 / 发布任务"]
-  PublishScript["tools/cocoapods-podx.sh publish"] --> Gem["cocoapods-podx.gem"]
-  Gem --> Nexus["Nexus RubyGems"]
-  InstallScript["tools/cocoapods-podx.sh install"] --> Nexus
-  InstallScript --> Shims["podx / mgit 命令 shim"]
+  DevFlow --> DependencyDomain
+  DevFlow --> MultiRepoDomain
+  DevFlow --> RuleDomain
+  DevFlow --> SkillDomain
+  ReleaseFlow --> MultiRepoDomain
+  ReleaseFlow --> RuleDomain
+  ReleaseFlow --> SkillDomain
+  ReleaseFlow --> PipelineDomain
+  ReleaseFlow --> PublishDomain
+
+  DependencyDomain --> DependencyArtifacts
+  MultiRepoDomain --> MultiRepoArtifacts
+  RuleDomain --> RuleArtifacts
+  SkillDomain --> SkillArtifacts
+  PipelineDomain --> PipelineArtifacts
+  PublishDomain --> PublishArtifacts
+
+  classDef entry fill:#E8F2FF,stroke:#4C7BD9,color:#17233C,stroke-width:1px;
+  classDef flow fill:#E9F8EF,stroke:#39A76D,color:#11351F,stroke-width:1px;
+  classDef domain fill:#FFF4DE,stroke:#D99718,color:#3C2A08,stroke-width:1px;
+  classDef artifact fill:#F3ECFF,stroke:#8B66D9,color:#24143D,stroke-width:1px;
+  classDef dist fill:#FDECEF,stroke:#D95C72,color:#3D111A,stroke-width:1px;
+
+  class Entry entry;
+  class DevFlow,ReleaseFlow flow;
+  class DependencyDomain,MultiRepoDomain,RuleDomain,SkillDomain,PipelineDomain,PublishDomain domain;
+  class DependencyArtifacts,MultiRepoArtifacts,RuleArtifacts,SkillArtifacts,PipelineArtifacts,PublishArtifacts artifact;
+  class Install dist;
+
+  style DomainColumn fill:#FFF9EA,stroke:#E3BE6A,stroke-width:1px,color:#3C2A08;
+  style ArtifactColumn fill:#F8F3FF,stroke:#BBA4EA,stroke-width:1px,color:#24143D;
 ```
 
 核心分层：
 
-- 命令入口层：`bin/podx`、`bin/mgit`，把用户命令转换为插件动作或原生工具语义。
-- CocoaPods 插件层：`Pod::Command::Podx`，统一调度依赖切换、工程诊断、发布和打开工程。
-- Runtime 层：读取 `podx.config.yml`、解析主 `Podfile`，决定组件走本地 `:path` 还是远端 `:git/:branch`。
-- Rules 层：集中管理团队规则，例如受保护提交文件、`mgit publish` 放行上下文、后续发布/合并约束。
-- 功能模块层：`OverlayFile`、`GitActions`、`MgitPublish`、`JenkinsPublish`，分别处理文件、Git、多仓发布和 Jenkins 打包。
-- MCP 集成层：`cocoapods-podx-mcp`，向 Codex 暴露受控的 `podx` / `mgit` 能力。
-- 安装发布层：`tools/cocoapods-podx.sh` 及底层脚本，负责 gem 安装、卸载、发布和命令 shim 生成。
+- 入口层：`podx`、`mgit` 和 MCP 是统一入口，分别承接依赖/发布意图、多仓库 Git 意图和 AI 调用意图。
+- 主流程层：只保留开发主流程和发布主流程两条主线，避免把所有工具能力平铺给使用者。
+- 能力域层：依赖治理、多仓库协作、发布执行、规则治理、技能编排、Pipeline Runtime 都是支撑主流程的能力域。
+- 依赖治理能力域：`Runtime` 负责解析 `Podfile` 和 `podx.config.yml`；`本地源码切换` 是其中一个具体能力，由 `Podfile.overlay` 和 `Development Pods/` 共同完成；`Deps` 负责依赖版本和组件关系查看。
+- 规则治理能力域：集中管理 `.gitignore` 本地产物治理、受保护文件、hooks、发布分支和发布渠道约束。
+- 技能编排能力域：把依赖巡检、发布检查、失败诊断等高频动作沉淀为标准技能；`Skill Runtime` 只负责技能校验、演练、执行和历史记录，供开发/发布主流程调用。
+- Pipeline Runtime 能力域：把开发/发布主流程、规则快照、技能门禁、发布策略、发布准入写成 `.podx/pipeline_*` 产物，供 CI 和发布前检查使用。
+- 产物与外部系统：每个能力域都有对应产物或外部系统，例如依赖配置、多仓状态、规则产物、技能产物、流程/AI 产物和 Jenkins 发布日志。
+- 安装分发层：`cocoapods-podx.sh` 负责 gem 安装、卸载、发布和 `podx/mgit` 命令 shim 生成。
+
+## 依赖环境
+
+基础环境：
+
+- macOS：用于 iOS 工程、Xcode、CocoaPods 和 `open` 等系统能力。
+- Ruby / RubyGems：用于运行 `cocoapods-podx` gem、构建 gem、安装命令 shim。
+- CocoaPods：用于 `podx install`、`podx update`、`pod podx` 等 CocoaPods 插件能力。
+- Git：用于 `mgit`、本地组件仓库、发布分支和远端 commit 信息查询。
+
+发布和 CI 环境：
+
+- Nexus RubyGems 仓库：存放 `cocoapods-podx-*.gem`，供团队安装和升级。
+- Jenkins：供 `podx publish` 触发打包、查询历史、拉取日志、分析失败和执行维护 job。
+- Hermes：可选，用于 Jenkins 失败日志二次分析和发布经验沉淀。
+- Xcode / xcodebuild：仅 iOS 打包机或本地编译需要。
 
 ## 安装
 
 在工程目录执行：
 
 ```bash
-sh tools/cocoapods-podx.sh install
+sh cocoapods-podx.sh install
 ```
 
 指定版本：
 
 ```bash
-sh tools/cocoapods-podx.sh install 0.0.51
+sh cocoapods-podx.sh install 0.0.51
+```
+
+升级已安装插件：
+
+```bash
+podx upgrade
+```
+
+升级到指定版本：
+
+```bash
+podx upgrade 0.0.51
 ```
 
 本地源码编译安装，不发布、不访问 Nexus：
 
 ```bash
-sh tools/cocoapods-podx.sh install-local
+sh cocoapods-podx.sh install-local
 ```
 
 卸载：
 
 ```bash
-sh tools/cocoapods-podx.sh uninstall
+sh cocoapods-podx.sh uninstall
 ```
 
 验证：
@@ -107,90 +155,55 @@ mgit branch
 
 安装脚本会优先安装到当前 CocoaPods 使用的 RubyGems 环境。没有 CocoaPods 的机器会进入 publish-only 模式，仍可使用 `podx publish --job ...`、`podx ai ...` 和 `mgit ...`。
 
-## 依赖环境
+## 主工程初始化
 
-基础环境：
-
-- macOS：用于 iOS 工程、Xcode、CocoaPods 和 `open` 等系统能力。
-- Ruby / RubyGems：用于运行 `cocoapods-podx` gem、构建 gem、安装命令 shim。
-- CocoaPods：用于 `podx install`、`podx update`、`pod podx` 等 CocoaPods 插件能力。
-- Git：用于 `mgit`、本地组件仓库、发布分支和远端 commit 信息查询。
-- Node.js：仅 MCP 服务需要，用于运行 `cocoapods-podx-mcp/server.js`。
-
-发布和 CI 环境：
-
-- Nexus RubyGems 仓库：存放 `cocoapods-podx-*.gem`，供团队安装和升级。
-- Jenkins：供 `podx publish` 触发打包、查询历史、拉取日志、分析失败和执行维护 job。
-- Hermes：可选，用于 Jenkins 失败日志二次分析和发布经验沉淀。
-- Xcode / xcodebuild：仅 iOS 打包机或本地编译需要。
-
-环境变量建议：
-
-- `COCOAPODS_PODX_GEM_SOURCE`：覆盖插件 gem 下载/发布源。
-- `COCOAPODS_PODX_VERSION`：安装时指定插件版本。
-- `GEM_HOST_API_KEY`：发布 gem 到私有 RubyGems 仓库时使用。
-- `COCOAPODS_PODX_AUTO_FIX_RETRY`：控制 Jenkins 自动修复后的自动重试。
-- `COCOAPODS_PODX_HERMES_EVOLUTION`：控制发布失败后的 Hermes 经验沉淀。
-- `COCOAPODS_PODX_FAILURE_CASE_DB`：Jenkins 失败案例库路径，默认 `~/.cocoapods-podx/jenkins_failure_cases.jsonl`；设置为 `0` 可关闭。
-
-README 不记录任何内网地址、账号、token、证书或具体 Jenkins URL；这些信息应由本地环境变量、CI/CD 配置或团队私有文档维护。
-
-## 接入工程
-
-在主 `Podfile` 中引入：
+1. 在主 `Podfile` 中引入：
 
 ```ruby
 require 'cocoapods-podx'
-
 CocoapodsPodx::Runtime.configure(project_directory: __dir__)
-
 source CocoapodsPodx::Runtime.private_source
 ```
 
-初始化工程配置：
+2. 一键初始化主工程：
 
 ```bash
 podx init
 ```
 
-生成的 `podx.config.yml` 只保存工程级配置，例如 specs 源、Git 根地址、发布工作目录、多仓库发布列表等。具体地址和账号信息请按团队规范在本地配置或环境变量中维护。
+`podx init` 会先检查并升级到远端最新 `cocoapods-podx`，再完成工程配置、团队规则、技能库、流程产物、AI 上下文和 Git hooks 初始化。使用方只需要记住这一条命令；下面这些命令只在需要单独维护某个能力时使用：
 
-## 依赖声明
-
-内部组件也使用官方 `pod` 声明，通过参数交给 `podx` 管理：
-
-```ruby
-pod 'NNApperance', :branch => 'develop'
-pod 'NNLibrary', :branch => 'develop', :remote_name => 'NNYYText', :local_name => 'NNLibrary'
-pod 'NNLogin', :branch => 'develop', :group_name => 'NNBussCom'
+```bash
+podx sync
+podx rules sync
+podx skill init
+podx pipeline script
+podx ai init
+podx hooks install
 ```
 
-常用参数：
+团队规则、skill、pipeline 或 AI 模板升级后，日常只需要通知大家执行 `podx sync`，不用分发一串子命令。`podx sync` 会先检查并升级到远端最新 `cocoapods-podx`，当前已是最新版本时会自动跳过升级，再同步团队基线。
 
-- `:branch`：远端分支，也是本地分支校验的回退值。
-- `:group_name`：多个 pod 共用一个业务仓库时使用。
-- `:remote_name`：远端仓库名和 pod 名不一致时使用。
-- `:local_name`：本地目录名和 pod 名不一致时使用。
-- `:configurations`：透传给 CocoaPods。
-- `:custom_git_target`：远端仓库不在默认分组时使用。
+3. 验证结果：
 
-## Podfile.overlay
-
-`Podfile.overlay` 与主 `Podfile` 同级，只声明哪些组件使用本地源码：
-
-```ruby
-pod 'NNBussCom'
-pod 'NNBasciCommon'
-pod 'NNRealReachability'
+```bash
+podx doctor
+podx deps
+podx pipeline status
+mgit status
 ```
 
-规则：
+`podx.config.yml` 只保存工程级配置，例如 specs 源、Git 根地址、发布工作目录和多仓库发布列表。`.podx/skills.yml`、`.podx/pipeline_ci.sh` 属于团队约定，建议提交到 Git；`podx init` / `podx sync` 会按最新模板补齐或更新它们。`.podx/skill_runs.yml`、`.podx/*_snapshot.*`、`.podx/*_report.*` 等运行产物和本地目录会由规则器补齐到 `.gitignore`，避免不同设备提交冲突。
 
-- 写入 `Podfile.overlay` 的组件走本地源码。
-- 未写入的组件走远端仓库。
-- 不要在 `Podfile.overlay` 中写 `branch`、`localWork` 或其他参数。
-- 组件必须能在主 `Podfile` 的内部组件声明中找到。
-- 本地仓库默认放在工程目录的 `Development Pods/` 下。
+需要在 CI 中校验规则、技能和流程时再执行：
+
+```bash
+podx rules ci
+podx skill ci strict
+podx pipeline snapshot
+podx pipeline report
+podx pipeline gate
+```
 
 ## 常用命令
 
@@ -218,6 +231,22 @@ podx NNBussCom                   # 切到本地源码
 podx disable NNBussCom           # 切回远端
 podx disable                     # 全部切回远端
 podx doctor                      # 检查工程配置和本地组件状态
+podx rules                       # 查看当前工程规则器规则
+podx rules check                 # 检查 .gitignore 是否符合规则器治理
+podx rules sync                  # 补齐 .gitignore 中缺失的本地产物规则
+podx rules snapshot              # 生成 .podx/rules_snapshot.json 规则快照
+podx rules ci                    # CI 门禁：生成规则快照，失败时返回非 0
+podx pipeline                    # 查看团队 CI/CD 能力地图
+podx pipeline flow               # 查看开发/发布主流程
+podx pipeline ci                 # 查看团队 CI 门禁模板
+podx pipeline script             # 生成 .podx/pipeline_ci.sh，内置快照/报告/总门禁
+podx pipeline doctor             # 检查团队 CI 脚本是否存在、可执行且与模板一致
+podx pipeline snapshot           # 生成 .podx/pipeline_snapshot.json
+podx pipeline report             # 生成 .podx/pipeline_report.md
+podx pipeline status             # 汇总 rules/skill/pipeline 产物状态
+podx pipeline gate               # CI 总门禁：汇总产物状态，失败时返回非 0
+podx pipeline policy             # 查看发布渠道门禁策略
+podx pipeline readiness          # 按当前门禁和策略评估各渠道发布准入
 podx open                        # 打开 .xcworkspace
 podx open --overlay              # 打开或生成 Podfile.overlay
 podx upgrade                     # 升级 cocoapods-podx 到 Nexus 最新版本
@@ -226,6 +255,8 @@ podx hooks install               # 安装 Git 提交保护 hook，默认拦截 P
 podx publish                     # 触发默认发布渠道
 podx publish tf                  # 触发 TestFlight 发布
 podx publish app                 # 触发 App Store 发布
+podx publish --pipeline-gate     # 发布前执行 pipeline 总门禁
+podx publish --no-pipeline-gate  # 临时跳过发布前 pipeline 总门禁
 podx publish --job JOB_NAME      # 指定发布任务
 podx publish history             # 表格查看默认 job 最近 10 次构建
 podx publish history 20 --job JOB_NAME
@@ -242,6 +273,34 @@ podx publish fix 1274 --fix-job podx-upgrade
                                   # 触发 Jenkins 维护 job 升级打包机插件
 podx dry-run publish app         # 预览发布参数
 ```
+
+`publish_pipeline_gate: true` 开启发布前预检后，默认策略为：蒲公英 `warn`，TestFlight/AppStore `strict`，Framework `warn`。可通过 `publish_pipeline_gate_strategy` 覆盖。
+
+```bash
+podx skill list                  # 查看团队 DevOps 技能库
+podx skill list 发布             # 按关键词筛选技能库
+podx skill init                  # 初始化项目级 .podx/skills.yml
+podx skill show dependency_audit # 查看技能定义和执行步骤
+podx skill doctor                # 体检团队 DevOps 技能库可用性
+podx skill graph                 # 查看技能依赖关系
+podx skill plan local_release_readiness
+                                  # 展开技能执行计划，不执行任务
+podx skill lint                  # 检查技能库定义规范，适合 CI 或提交前检查
+podx skill verify release_testflight
+                                  # 校验技能执行前置条件
+podx dry-run skill run dependency_audit
+                                  # 演练技能，不写入运行历史
+podx skill run dependency_audit  # 执行技能
+podx skill history 10            # 查看最近 10 次技能运行记录
+podx skill stats                 # 查看技能运行统计和成功率
+podx skill report                # 查看技能库治理总览，适合日报或 CI 摘要
+podx skill suggest               # 根据治理状态给出下一步建议
+podx skill snapshot              # 生成 .podx/skill_snapshot.md 治理快照
+podx skill ci                    # CI 校验技能库并生成 Markdown/JSON 治理报告
+podx skill ci strict             # 严格 CI 门禁，report fail 也会失败
+```
+
+项目级 `.podx/skills.yml` 支持通过 `depends_on` 组合已有技能，适合把依赖巡检、发布前状态检查、失败诊断等基础动作编排成团队高阶流程。
 
 ```bash
 mgit branch                      # 查看主工程和本地组件分支
@@ -271,157 +330,85 @@ protected_commit_files:
 
 规则清单会同时展示 `mgit publish release/x.y.z` 相关约束：发布分支、Podfile 组件分支改写、iOS 主工程 Version/Build 生成规则，以及 `podx publish tf/app` 的 release 分支限制。执行 `podx publish tf` 或 `podx publish app` 时，如果未指定 `--branch`，当前主工程分支也必须是 `release/x.x.x`；发布前还会确认主工程和依赖组件的远端 `release/x.x.x` 分支都存在。
 
-## AI 初始化
+## 常见用法
+
+已有主工程初始化：
 
 ```bash
-podx ai init
-podx ai update
-podx ai doctor
-podx ai mcp
-podx ai mcp codex
-podx ai mcp claude
+podx init
+podx doctor
 ```
 
-`podx ai init` 会生成：
-
-- `CLAUDE.md`
-- `.claude/commands/`
-- `.claude/rules/`
-- `.claude/skills/`
-- `.claude/agents/`
-- `.claude/mcps/`
-
-其中 `.claude/mcps/` 保存 CodeGraph / Code Review Graph 初始化脚本和 Hermes MCP 注册脚本。团队默认通过 Hermes 统一管理 MCP。
+新电脑安装并验证：
 
 ```bash
-sh .claude/mcps/setup-hermes-mcp.sh
-sh .claude/mcps/hermes-mcp.sh
-hermes mcp list
-hermes mcp test codegraph
-hermes memory status
-```
-
-`setup-hermes-mcp.sh` 会在本机缺少 Hermes 时自动安装 Hermes，然后注册工程 MCP。可通过 `HERMES_INSTALL_URL` 指定内部镜像安装脚本，通过 `HERMES_BIN` 指定已有 Hermes 命令路径。
-
-Hermes 内置记忆始终可用。记忆使用规范和模板位于 `.claude/memory/`；推荐只记录稳定团队规范、个人协作偏好和反复出现的问题处理经验，不记录密码、token、证书、内部服务地址或临时日志。
-
-## MCP
-
-`podx` 自身的 MCP 服务位于：
-
-```bash
-tools/cocoapods-podx-mcp/
-```
-
-启动：
-
-```bash
-node tools/cocoapods-podx-mcp/server.js
-```
-
-可暴露的能力包括：
-
-- `podx_doctor`
-- `podx_main`
-- `podx_install`
-- `podx_update`
-- `mgit_status`
-- `mgit_branch`
-- `mgit_diff`
-- `mgit_pull`
-- `mgit_checkout`
-- `mgit_stash`
-
-## cocoapods-podx 插件发布
-
-插件源码位于：
-
-```text
-tools/cocoapods-podx/
-```
-
-发布入口：
-
-```bash
-sh tools/cocoapods-podx.sh publish
-```
-
-指定版本发布：
-
-```bash
-sh tools/cocoapods-podx.sh publish 0.0.51
-```
-
-推荐发布前检查：
-
-```bash
-ruby -c tools/cocoapods-podx/lib/pod/command/podx.rb
-ruby -c tools/cocoapods-podx/lib/cocoapods_podx/mgit_standalone.rb
-ruby -c tools/cocoapods-podx/lib/cocoapods_podx/commands/git_actions.rb
-node --check tools/cocoapods-podx-mcp/server.js
-sh tools/cocoapods-podx.sh install-local
-podx version
-mgit branch
-```
-
-发布流程：
-
-1. `publish-cocoapods-podx.sh` 读取 `cocoapods-podx.gemspec` 当前版本。
-2. 未指定版本时，脚本查询 Nexus 中最新版本并自动递增 patch。
-3. 更新 gemspec 版本号。
-4. 执行 `gem build cocoapods-podx.gemspec` 生成 `cocoapods-podx-版本号.gem`。
-5. 上传 gem 到 Nexus RubyGems 仓库。
-6. 输出安装命令，供打包机或开发机升级验证。
-
-发布后验证：
-
-```bash
-sh tools/cocoapods-podx.sh install 版本号
+sh cocoapods-podx.sh install
 podx version
 podx doctor
+```
+
+切换组件到本地源码开发：
+
+```bash
+podx workon NNBussCom
+podx install
+podx open
+```
+
+查看当前工程依赖和多仓库状态：
+
+```bash
+podx deps
+mgit branch
 mgit status
 ```
 
-注意事项：
+同步主工程和本地组件：
 
-- 发布前确认 `cocoapods-podx.gemspec` 的 `spec.files` 覆盖 `bin/*` 和 `lib/**/*.rb`。
-- `bin/podx`、`bin/mgit` 是命令 shim 模板，安装后会生成到 CocoaPods 所在 RubyGems 环境。
-- 如果只想验证本地源码，不要发布到 Nexus，使用 `sh tools/cocoapods-podx.sh install-local`。
-- 打包机升级建议通过 Jenkins 维护 job 执行，避免人工登录机器改环境。
+```bash
+mgit pull
+podx install
+```
 
-## 发布约束
+提交本地组件变更：
 
-- `podx publish` 默认发布远端当前分支 HEAD。
-- `tf` / `app` 渠道要求发布分支符合 `release/x.y.z` 格式。
-- 发布服务地址、账号、令牌和 job 细节不写入 README，应由本地配置、环境变量或 CI/CD 系统提供。
-- 触发前会展示发布分支、渠道和远端 commit 信息；失败时输出关键失败原因。
-- 可通过 `podx publish history [N]` 表格查看最近构建号、分支、渠道、来源、结果、耗时、commit 和 commit 信息。
-- Jenkins job 如配置 `PODX_TRIGGER_SOURCE` 参数，`podx publish` 会写入来源标记；老构建或未配置参数时，会根据 Jenkins 触发原因推断来源。
-- 可通过 `podx publish log [BUILD]` 查看 Jenkins 构建日志；不传 `BUILD` 默认查看 `lastBuild`。
-- 可通过 `podx publish doctor [BUILD]` 拉取 Jenkins 日志并分析失败原因；默认会尝试调用 Hermes 做二次分析，`--no-hermes` 可关闭。
-- 可通过 `podx publish fix [BUILD]` 半自动修复低风险问题；执行命令前会确认，`--dry-run` 只预览动作。
-- `podx publish` 检测到 Jenkins 打包机缺少/版本过旧的 `cocoapods-podx` 配置时，会自动触发维护 job，默认 job 为 `pod-upgrade`。
-- 自动修复 job 成功后会自动重新触发一次 Jenkins 打包；可通过 `COCOAPODS_PODX_AUTO_FIX_RETRY=0` 关闭自动重试。
-- `podx publish` 失败和自动修复事件会在检测到 Hermes 时触发自我进化分析，沉淀可复用发布经验；可通过 `--no-hermes` 或 `COCOAPODS_PODX_HERMES_EVOLUTION=0` 关闭。
-- `podx publish` 会把允许 Hermes 进化分析的 Jenkins 失败事件写入失败案例库，字段包含构建号、渠道、失败分类、关键日志、修复策略和脱敏后的错误信息；Hermes 分析时会带上最近历史案例摘要，便于沉淀常见失败 case 和完善自动修复策略。
-- 其它常见 iOS 打包环境问题可按类型配置维护 job，命中后自动触发并提示重新发布：
-  - `COCOAPODS_PODX_AUTO_FIX_PODS_JOB`：CocoaPods specs/cache 或依赖解析问题。
-  - `COCOAPODS_PODX_AUTO_FIX_NETWORK_JOB`：Git、Specs、第三方下载源网络问题。
-  - `COCOAPODS_PODX_AUTO_FIX_SIGNING_JOB`：证书、描述文件、签名环境问题。
-  - `COCOAPODS_PODX_AUTO_FIX_XCODE_JOB`：Xcode、SDK、Toolchain 环境问题，包括升级 Xcode 后 Jenkins 未切换开发者工具链导致的 Metal/metallib 错误。
-  - `COCOAPODS_PODX_AUTO_FIX_DISK_JOB`：磁盘空间不足、DerivedData 或旧产物清理。
-  - `COCOAPODS_PODX_AUTO_FIX_SCRIPT_JOB`：SwiftLint、R.swift 等构建脚本工具链问题。
-- Jenkins 打包机升级建议通过专用维护 job 执行，例如 `podx publish fix BUILD --fix-job podx-upgrade`；维护 job 内部执行 `sh tools/cocoapods-podx.sh install`。
+```bash
+mgit status
+mgit add .
+mgit commit -m "update: 描述变更"
+mgit push
+```
 
-## 文档边界
+发布蒲公英测试包：
 
-README 只描述通用能力和使用方式，不包含：
+```bash
+podx pipeline readiness
+podx publish
+```
 
-- 内网服务地址
-- 仓库服务地址
-- 账号密码
-- 发布服务具体 URL
-- gem 源具体 URL
-- 公司或项目私有发布参数
+发布 TestFlight 或 App Store：
 
-这些内容应放在 `podx.config.yml`、本地环境变量、团队内部运维文档或 CI/CD 平台配置中。
+```bash
+mgit publish release/x.y.z
+podx publish tf --branch release/x.y.z
+podx publish app --branch release/x.y.z
+```
+
+查看和诊断 Jenkins 构建：
+
+```bash
+podx publish history 10
+podx publish log BUILD
+podx publish doctor BUILD
+podx publish fix BUILD --dry-run
+```
+
+生成团队 CI/CD 产物：
+
+```bash
+podx rules ci
+podx skill ci strict
+podx pipeline snapshot
+podx pipeline report
+podx pipeline gate
+```
