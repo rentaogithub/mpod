@@ -1,0 +1,456 @@
+#!/bin/sh
+
+detect_cocoapods_gem_home() {
+  pod_path="$(command -v pod 2>/dev/null)"
+  if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then
+    parsed="$(sed -n 's/^GEM_HOME="\([^"]*\)".*/\1/p' "$pod_path" 2>/dev/null | head -n 1)"
+    if [ -n "$parsed" ]; then
+      echo "$parsed"
+      return 0
+    fi
+  fi
+
+  ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec ? File.expand_path("..", spec.full_gem_path) : ""' 2>/dev/null
+}
+
+detect_cocoapods_ruby() {
+  command -v ruby
+}
+
+detect_podx_lib_path() {
+  if [ -n "$COCOAPODS_PODX_LOCAL_LIB" ] && [ -d "$COCOAPODS_PODX_LOCAL_LIB" ]; then
+    echo "$COCOAPODS_PODX_LOCAL_LIB"
+    return 0
+  fi
+
+  if [ -n "$gem_home" ]; then
+    GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
+  else
+    ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
+  fi
+}
+
+pod_available() {
+  command -v pod >/dev/null 2>&1 && pod --version >/dev/null 2>&1
+}
+
+latest_podx_version_from_nexus() {
+  if [ -n "$COCOAPODS_PODX_LATEST_VERSION" ]; then
+    echo "$COCOAPODS_PODX_LATEST_VERSION"
+    return 0
+  fi
+
+  NEXUS_SEARCH_API="${COCOAPODS_PODX_NEXUS_SEARCH_API:-${COCOAPODS_OVERLAY_NEXUS_SEARCH_API:-http://172.31.4.4:9091/service/rest/beta/search/assets?repository=nn_ios}}" \
+  NEXUS_USER="${COCOAPODS_PODX_NEXUS_USER:-${COCOAPODS_OVERLAY_NEXUS_USER:-admin}}" \
+  NEXUS_PASSWORD="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSWORD:-admin123}}" \
+  ruby -e '
+require "json"
+require "net/http"
+require "uri"
+
+api = ENV.fetch("NEXUS_SEARCH_API")
+user = ENV["NEXUS_USER"]
+password = ENV["NEXUS_PASSWORD"]
+versions = []
+token = nil
+
+loop do
+  uri = URI(api)
+  params = URI.decode_www_form(uri.query || "")
+  params << ["continuationToken", token] if token && !token.empty?
+  uri.query = URI.encode_www_form(params)
+  request = Net::HTTP::Get.new(uri)
+  request.basic_auth(user, password) if user && !user.empty?
+  response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") { |http| http.request(request) }
+  abort("Nexus 查询失败：HTTP #{response.code}") unless response.is_a?(Net::HTTPSuccess)
+  body = JSON.parse(response.body)
+  Array(body["items"]).each do |item|
+    path = item["path"].to_s
+    next unless path.start_with?("rubygems/cocoapods-podx/")
+    match = path.match(%r{cocoapods-podx-([0-9]+(?:\.[0-9]+)*)\.gem\z})
+    versions << match[1] if match
+  end
+  token = body["continuationToken"]
+  break if token.nil? || token.empty?
+end
+
+abort("Nexus 中未找到 cocoapods-podx gem。") if versions.empty?
+puts versions.max_by { |version| version.split(".").map(&:to_i) }
+'
+}
+
+upgrade_cocoapods_podx() {
+  current_version="$1"
+  target_version="$2"
+  COCOAPODS_PODX_UPGRADED=0
+  gem_home="$(detect_cocoapods_gem_home)"
+  if [ -z "$gem_home" ]; then
+    gem_home="$(ruby -e 'require "rubygems"; puts Gem.user_dir')"
+  fi
+
+  if [ -z "$target_version" ]; then
+    target_version="$(latest_podx_version_from_nexus)"
+  fi
+
+  if [ -n "$target_version" ] && [ "$target_version" = "$current_version" ]; then
+    echo "cocoapods-podx $current_version 已是最新版本，无需更新"
+    return 0
+  fi
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/cocoapods-podx-upgrade.XXXXXX")"
+  gem_file="$tmp_dir/cocoapods-podx-$target_version.gem"
+  gem_url="${COCOAPODS_PODX_GEM_SOURCE:-${COCOAPODS_OVERLAY_GEM_SOURCE:-http://172.31.4.4:9091/repository/nn_ios/rubygems/cocoapods-podx/}}"
+  gem_url="${gem_url%/}/cocoapods-podx-$target_version.gem"
+  nexus_user="${COCOAPODS_PODX_NEXUS_USER:-${COCOAPODS_OVERLAY_NEXUS_USER:-admin}}"
+  nexus_password="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSWORD:-admin123}}"
+
+  echo "cocoapods-podx [upgrade] $current_version -> $target_version"
+  if [ -n "$nexus_user" ]; then
+    curl -fL -u "$nexus_user:$nexus_password" -o "$gem_file" "$gem_url" || {
+      rm -rf "$tmp_dir"
+      return 1
+    }
+  else
+    curl -fL -o "$gem_file" "$gem_url" || {
+      rm -rf "$tmp_dir"
+      return 1
+    }
+  fi
+
+  GEM_HOME="$gem_home" \
+  GEM_PATH="$gem_home" \
+  gem install --local --ignore-dependencies --force --no-document "$gem_file"
+
+  installed_dir="$(GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_by_name("cocoapods-podx"); puts spec.full_gem_path')"
+  command_dir="$(dirname "$0")"
+  if [ -w "$command_dir" ]; then
+    cp "$installed_dir/bin/podx" "$command_dir/podx"
+    cp "$installed_dir/bin/mgit" "$command_dir/mgit"
+    chmod +x "$command_dir/podx" "$command_dir/mgit"
+  else
+    echo "Warning: 无法刷新命令 shim：$command_dir 不可写" >&2
+  fi
+
+  rm -rf "$tmp_dir"
+  COCOAPODS_PODX_UPGRADED=1
+  echo "cocoapods-podx [upgraded] $target_version"
+}
+
+current_podx_version() {
+  gem_home="$(detect_cocoapods_gem_home)"
+  if [ -n "$gem_home" ]; then
+    GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? spec.version : ""' 2>/dev/null
+  else
+    ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? spec.version : ""' 2>/dev/null
+  fi
+}
+
+detect_podx_lib_and_gem_env() {
+  gem_home="$(detect_cocoapods_gem_home)"
+  podx_lib="$(detect_podx_lib_path)"
+  if [ -n "$podx_lib" ]; then
+    export RUBYLIB="$podx_lib${RUBYLIB:+:$RUBYLIB}"
+  fi
+  if [ -n "$gem_home" ]; then
+    export GEM_HOME="$gem_home"
+  fi
+}
+
+run_publish_only() {
+  detect_podx_lib_and_gem_env
+  exec ruby -rcocoapods_podx/publish_only -e 'CocoapodsPodx::PublishOnly.run(ARGV)' -- "$@"
+}
+
+run_pod_overlay() {
+  detect_podx_lib_and_gem_env
+  COCOAPODS_PODX_INTERNAL=1 exec pod podx "$@"
+}
+
+show_modern_cli_tools() {
+  cat <<'TOOLS'
+podx tools 检查现代 CLI 工具状态。
+
+用途                      命令          状态
+TOOLS
+
+  print_tool_status "搜文本" "rg" "ripgrep"
+  print_tool_status "找文件" "fd" "fd"
+  print_tool_status "看文件" "bat" "bat"
+  print_tool_status "处理 JSON" "jq" "jq"
+  print_tool_status "处理 YAML" "yq" "yq"
+  print_tool_status "看 diff" "delta" "git-delta"
+  print_tool_status "改代码/查反模式" "ast-grep" "ast-grep"
+  print_tool_status "找符号" "ctags" "universal-ctags"
+  print_tool_status "看进程" "htop" "htop"
+
+  cat <<'TOOLS'
+
+推荐安装命令：
+  brew install ripgrep fd jq bat ast-grep universal-ctags yq git-delta htop
+
+建议配置：
+  export RIPGREP_CONFIG_PATH="$HOME/.ripgreprc"
+  export MANPAGER="sh -c 'col -bx | bat -l man -p'"
+TOOLS
+}
+
+print_tool_status() {
+  purpose="$1"
+  command_name="$2"
+  package_name="$3"
+  if command -v "$command_name" >/dev/null 2>&1; then
+    status="installed"
+  else
+    status="missing: brew install $package_name"
+  fi
+  printf '  %-24s %-12s %s\n' "$purpose" "$command_name" "$status"
+}
+
+show_help() {
+  cat <<'HELP'
+podx 是工程依赖、发布和 AI 工作流命令入口。
+
+pod 扩展命令:
+  podx workon NNBussCom             # 开始开发组件，等同 podx NNBussCom
+  podx check                        # 检查工程接入和本地组件状态
+  podx graph                        # 更新 AI 图谱并检查改动影响
+  podx ship [pgyer|tf|app]          # 发布意图入口，等同 podx publish
+  podx diagnose [BUILD]             # 分析 Jenkins 打包失败，等同 podx publish doctor
+  podx repair [BUILD]               # 半自动修复 Jenkins 打包失败，等同 podx publish fix
+  podx tools                        # 检查现代 CLI 工具状态
+  podx init                        # 一键初始化工程配置、规则、技能、流程、AI 上下文和 hooks
+  podx sync                        # 同步团队规则、技能、流程、AI 上下文和 hooks
+  podx install                     # 等同 pod install
+  podx update NNBussCom            # 更新命中的本地组件后执行 pod update
+  podx deps                        # 查看依赖组件分支/版本和依赖关系
+  podx rules                       # 查看当前工程规则器规则
+  podx rules check                 # 检查 .gitignore 是否符合规则器治理
+  podx rules sync                  # 补齐 .gitignore 中缺失的本地产物规则
+  podx rules snapshot              # 生成 .podx/rules_snapshot.json 规则快照
+  podx rules ci                    # CI 门禁：生成规则快照，失败时返回非 0
+  podx pipeline                    # 查看团队 CI/CD 能力地图
+  podx pipeline flow               # 查看开发/发布主流程
+  podx pipeline ci                 # 查看团队 CI 门禁模板
+  podx pipeline script             # 生成 .podx/pipeline_ci.sh，内置快照/报告/总门禁
+  podx pipeline doctor             # 检查团队 CI 脚本是否存在、可执行且与模板一致
+  podx pipeline snapshot           # 生成 .podx/pipeline_snapshot.json
+  podx pipeline report             # 生成 .podx/pipeline_report.md
+  podx pipeline status             # 汇总 rules/skill/pipeline 产物状态
+  podx pipeline gate               # CI 总门禁：汇总产物状态，失败时返回非 0
+  podx pipeline policy             # 查看发布渠道门禁策略
+  podx pipeline readiness          # 按当前门禁和策略评估各渠道发布准入
+  podx skill list [KEYWORD]        # 查看/筛选团队 iOS DevOps skill library
+  podx skill init                  # 生成工程级 .podx/skills.yml
+  podx skill show NAME             # 查看 skill 详情
+  podx skill history [N]           # 查看最近 N 次 skill 执行记录
+  podx skill stats                 # 查看 skill 运行统计
+  podx skill report                # 查看 skill runtime 治理总览
+  podx skill suggest               # 根据治理状态给出下一步建议
+  podx skill snapshot              # 生成 Markdown 治理快照
+  podx skill ci                    # CI 校验 skill library，并生成 Markdown/JSON 治理报告
+  podx skill ci strict             # 严格 CI 门禁，report fail 也会失败
+  podx skill doctor                # 体检团队 skill library 可用性
+  podx skill graph                 # 查看 skill 依赖关系
+  podx skill plan NAME             # 展开 skill 执行计划，不执行
+  podx skill lint                  # 检查 skill library 定义规范
+  podx skill verify NAME           # 校验 skill 前置条件
+  podx skill run NAME              # 执行已验证的浅层 skill
+  podx publish [pgyer|tf|app]      # 触发 Jenkins 发布
+  podx publish --pipeline-gate     # 发布前执行 pipeline 总门禁
+  podx publish --no-pipeline-gate  # 临时跳过发布前 pipeline 总门禁
+  podx publish log [BUILD]         # 查看 Jenkins 日志
+  podx publish history [N]         # 查看 Jenkins 最近构建
+  podx publish doctor [BUILD]      # 分析 Jenkins 打包失败
+  podx publish fix [BUILD]         # 半自动修复 Jenkins 打包失败
+  podx ai init                     # 初始化 AI 辅助配置
+  podx hooks install               # 安装 Git 提交保护 hook
+  podx version                     # 查看版本
+  podx upgrade [VERSION]           # 升级 cocoapods-podx
+  podx list                        # 查看组件状态
+
+git 命令:
+  mgit branch [NAME]             # 组合查看 git branch
+  mgit checkout BRANCH           # 组合切换本地组件仓库分支
+  mgit checkout [NAME] BRANCH    # 只切换指定组件仓库分支
+  mgit merge [NAME] BRANCH       # 合并来源分支到当前同名分支组件仓库
+  mgit stash [NAME]              # 组合执行 git stash push -u
+  mgit status [NAME]             # 组合查看 git status --short
+  mgit diff [NAME]               # 组合查看 git diff
+  mgit log [NAME]                # 组合查看最近 5 条 git log
+  mgit add [NAME]                # 组合执行 git add -A；mgit add . / -A 等同全量 add
+  mgit pull [NAME]               # 组合执行 git pull --ff-only
+  mgit push [NAME]               # 组合执行 git push
+  mgit commit [NAME] -m "msg"    # 组合提交主工程和本地组件仓库
+  mgit commit -m "msg" -edit Podfile.rb
+  mgit publish release/x.x.x     # 从 develop 创建/更新多仓库发布分支并推送
+HELP
+}
+
+case "$1" in
+  ""|help|--help|-h)
+    show_help
+    ;;
+  version|--version|-v)
+    detect_podx_lib_and_gem_env
+    ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts "cocoapods-podx #{spec ? spec.version : "unknown"}"'
+    ;;
+  upgrade)
+    upgrade_cocoapods_podx "$(current_podx_version)" "$2"
+    ;;
+  workon|dev)
+    shift
+    run_pod_overlay "$@"
+    ;;
+  check|health)
+    shift
+    run_pod_overlay --doctor "$@"
+    ;;
+  graph)
+    shift
+    run_pod_overlay --ai update "$@"
+    ;;
+  ship)
+    shift
+    if [ "$1" = "dry-run" ]; then
+      shift
+      run_pod_overlay --dry-run --publish "$@"
+    fi
+    run_pod_overlay --publish "$@"
+    ;;
+  diagnose)
+    shift
+    run_pod_overlay --jenkins-doctor "$@"
+    ;;
+  repair|heal)
+    shift
+    jenkins_fix_option="--jenkins""-fix"
+    run_pod_overlay "$jenkins_fix_option" "$@"
+    ;;
+  tools)
+    shift
+    show_modern_cli_tools
+    ;;
+  publish)
+    if ! pod_available; then
+      run_publish_only "$@"
+    fi
+    shift
+    case "$1" in
+      history)
+        shift
+        run_pod_overlay --jenkins-history "$@"
+        ;;
+      log)
+        shift
+        run_pod_overlay --jenkins-log "$@"
+        ;;
+      doctor)
+        shift
+        run_pod_overlay --jenkins-doctor "$@"
+        ;;
+      fix)
+        shift
+        jenkins_fix_option="--jenkins""-fix"
+        run_pod_overlay "$jenkins_fix_option" "$@"
+        ;;
+      *)
+        run_pod_overlay --publish "$@"
+        ;;
+    esac
+    ;;
+  dry-run)
+    shift
+    if [ "$1" = "publish" ]; then
+      shift
+      run_pod_overlay --dry-run --publish "$@"
+    fi
+    if [ "$1" = "hooks" ]; then
+      shift
+      run_pod_overlay --dry-run --hooks "$@"
+    fi
+    if [ "$1" = "skill" ]; then
+      shift
+      run_pod_overlay --dry-run --skill "$@"
+    fi
+    run_pod_overlay --dry-run "$@"
+    ;;
+  install)
+    shift
+    exec pod install "$@"
+    ;;
+  repo)
+    shift
+    if [ "$1" = "update" ]; then
+      shift
+      exec pod repo update "$@"
+    fi
+    run_pod_overlay repo "$@"
+    ;;
+  update)
+    shift
+    run_pod_overlay --update "$@"
+    ;;
+  list)
+    shift
+    run_pod_overlay --list "$@"
+    ;;
+  deps|dependencies)
+    shift
+    run_pod_overlay --deps "$@"
+    ;;
+  rules)
+    shift
+    run_pod_overlay --rules "$@"
+    ;;
+  pipeline)
+    shift
+    run_pod_overlay --pipeline "$@"
+    ;;
+  skill)
+    shift
+    run_pod_overlay --skill "$@"
+    ;;
+  init)
+    shift
+    upgrade_cocoapods_podx "$(current_podx_version)" "$COCOAPODS_PODX_INIT_VERSION" || exit $?
+    if [ "${COCOAPODS_PODX_UPGRADED:-0}" = "1" ]; then
+      exec "$0" init "$@"
+    fi
+    run_pod_overlay --init "$@"
+    ;;
+  sync)
+    shift
+    upgrade_cocoapods_podx "$(current_podx_version)" "$COCOAPODS_PODX_SYNC_VERSION" || exit $?
+    if [ "${COCOAPODS_PODX_UPGRADED:-0}" = "1" ]; then
+      exec "$0" sync "$@"
+    fi
+    run_pod_overlay --sync "$@"
+    ;;
+  open)
+    shift
+    run_pod_overlay --open "$@"
+    ;;
+  doctor)
+    shift
+    run_pod_overlay --doctor "$@"
+    ;;
+  ai)
+    shift
+    run_pod_overlay --ai "$@"
+    ;;
+  hooks)
+    shift
+    run_pod_overlay --hooks "$@"
+    ;;
+  main)
+    shift
+    run_pod_overlay --main "$@"
+    ;;
+  disable)
+    shift
+    run_pod_overlay --disable "$@"
+    ;;
+  *)
+    run_pod_overlay "$@"
+    ;;
+esac

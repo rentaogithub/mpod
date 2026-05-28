@@ -15,7 +15,7 @@ Hermes Agent 与 iOS DevOps 的组合方案见 [HERMES_IOS_DEVOPS.md](HERMES_IOS
 ## 整体架构
 
 ```mermaid
-flowchart LR
+graph LR
   Entry["入口层<br/>开发者 / CI / AI -> podx / mgit"]
   Install["安装分发<br/>script / gem / shim"]
 

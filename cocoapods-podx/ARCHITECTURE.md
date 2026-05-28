@@ -13,7 +13,7 @@
 ## 目录结构
 
 ```text
-tools/cocoapods-podx/
+nn-ios-tools/cocoapods-podx/
   bin/
     podx                                      # pod 增强命令入口
     mgit                                      # 多仓库 git 命令入口

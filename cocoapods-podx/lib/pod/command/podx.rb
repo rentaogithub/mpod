@@ -106,6 +106,7 @@ class Pod::Command::Podx < Pod::Command
             mgit branch [NAME]             组合查看 git branch
             mgit checkout BRANCH           组合切换本地组件仓库分支
             mgit checkout [NAME] BRANCH    只切换指定组件仓库分支
+            mgit merge [NAME] BRANCH       合并来源分支到当前同名分支组件仓库
             mgit stash [NAME]              组合执行 git stash push -u
             mgit status [NAME]             组合查看 git status --short
             mgit diff [NAME]               组合查看 git diff
@@ -528,6 +529,10 @@ class Pod::Command::Podx < Pod::Command
 
   def extract_checkout_branch_from_arguments!
     return unless @checkout_mode
+
+    if @pod_names.length == 1 && supported_overlay_names.include?(@pod_names.first.to_s)
+      help! "缺少 checkout 目标分支：mgit checkout #{@pod_names.first} BRANCH"
+    end
 
     @checkout_branch = @pod_names.pop.to_s.strip
     help! '请指定 checkout 目标分支，例如：mgit checkout release/5.14.2' if @checkout_branch.empty?

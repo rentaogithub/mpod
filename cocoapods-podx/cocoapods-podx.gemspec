@@ -10,7 +10,8 @@ Gem::Specification.new do |spec|
 
   spec.files         = Dir[
     'bin/*',
-    'lib/**/*.rb'
+    'lib/**/*.rb',
+    'lib/cocoapods_podx/shims/*'
   ]
   spec.bindir        = 'bin'
   spec.executables   = %w[podx mgit]

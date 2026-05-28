@@ -1,0 +1,42 @@
+#!/bin/sh
+
+# Examples: mgit status, mgit pull, mgit publish release/x.x.x
+
+detect_cocoapods_gem_home() {
+  pod_path="$(command -v pod 2>/dev/null)"
+  if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then
+    parsed="$(sed -n 's/^GEM_HOME="\([^"]*\)".*/\1/p' "$pod_path" 2>/dev/null | head -n 1)"
+    if [ -n "$parsed" ]; then
+      echo "$parsed"
+      return 0
+    fi
+  fi
+
+  ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec ? File.expand_path("..", spec.full_gem_path) : ""' 2>/dev/null
+}
+
+detect_podx_lib_path() {
+  if [ -n "$COCOAPODS_PODX_LOCAL_LIB" ] && [ -d "$COCOAPODS_PODX_LOCAL_LIB" ]; then
+    echo "$COCOAPODS_PODX_LOCAL_LIB"
+    return 0
+  fi
+
+  if [ -n "$gem_home" ]; then
+    GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
+  else
+    ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
+  fi
+}
+
+gem_home="$(detect_cocoapods_gem_home)"
+podx_lib="$(detect_podx_lib_path)"
+
+if [ -n "$podx_lib" ]; then
+  export RUBYLIB="$podx_lib${RUBYLIB:+:$RUBYLIB}"
+fi
+
+if [ -n "$gem_home" ]; then
+  export GEM_HOME="$gem_home"
+fi
+
+exec ruby -rcocoapods_podx/mgit_standalone -e 'CocoapodsPodx::MgitStandalone.run(ARGV)' -- "$@"

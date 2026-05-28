@@ -55,7 +55,7 @@ flowchart TB
 | Runtime 层 | `lib/cocoapods_podx/runtime.rb` | 读取配置，解析内部组件，决定本地 `:path` 或远端 `:git/:branch` |
 | 功能模块层 | `commands/*.rb` | 拆分 overlay 文件、组合 git、Jenkins 发布、多仓库发布分支 |
 | 安装发布层 | `tools/cocoapods-podx.sh`、`install/uninstall/publish` 脚本 | 从 Nexus 安装、升级、卸载、发布 gem，生成命令 shim |
-| AI 集成层 | `tools/cocoapods-podx-mcp/server.js` | 给 Codex 暴露受控的 `podx` / `mgit` 工具 |
+| AI 集成层 | `nn-ios-tools/cocoapods-podx-mcp/server.js` | 给 Codex 暴露受控的 `podx` / `mgit` 工具；不需要放在主工程目录下 |
 
 ## 能力集
 
@@ -149,8 +149,8 @@ flowchart TD
 | `Podfile.overlay` | 否 | 个人本地开关，只声明哪些组件走本地源码 |
 | `Development Pods/` | 否 | 本地组件仓库目录，不依赖主工程外部路径 |
 | `.mgit-publish/` | 否 | `mgit publish` 临时工作目录 |
-| `tools/cocoapods-podx/` | 是 | 插件源码、命令模板、测试 |
-| `tools/cocoapods-podx-mcp/` | 是 | Codex MCP server |
+| `nn-ios-tools/cocoapods-podx/` | 是 | 插件源码、命令模板、测试；不需要放在主工程目录下 |
+| `nn-ios-tools/cocoapods-podx-mcp/` | 是 | Codex MCP server；不需要放在主工程目录下 |
 
 ## 典型使用链路
 

@@ -83,6 +83,38 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     )
   end
 
+  def test_mgit_checkout_requires_branch_when_only_component_name_is_given
+    Dir.chdir(@project_dir) do
+      error = assert_raises(Pod::Informative) do
+        CocoapodsPodx::MgitStandalone.new(['checkout', 'NNLibrary'])
+      end
+
+      assert_includes error.message, '缺少 checkout 目标分支'
+      assert_includes error.message, 'mgit checkout NNLibrary BRANCH'
+    end
+  end
+
+  def test_mgit_merge_requires_branch_when_only_component_name_is_given
+    Dir.chdir(@project_dir) do
+      error = assert_raises(Pod::Informative) do
+        CocoapodsPodx::MgitStandalone.new(['merge', 'NNBussCom'])
+      end
+
+      assert_includes error.message, '缺少 merge 来源分支'
+      assert_includes error.message, 'mgit merge NNBussCom BRANCH'
+    end
+  end
+
+  def test_mgit_checkout_and_merge_accept_single_branch_for_all_repos
+    Dir.chdir(@project_dir) do
+      checkout = CocoapodsPodx::MgitStandalone.new(['checkout', 'release/5.14.2'])
+      merge = CocoapodsPodx::MgitStandalone.new(['merge', 'develop'])
+
+      assert_equal 'release/5.14.2', checkout.instance_variable_get(:@checkout_branch)
+      assert_equal 'develop', merge.instance_variable_get(:@merge_branch)
+    end
+  end
+
   def test_pod_overlay_accepts_pod_entries
     overlay = CocoapodsPodx::Runtime::PodOverlay.new
     overlay.instance_eval(<<~RUBY)
@@ -1312,6 +1344,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'cocoapods_podx/publish_only'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx hooks install'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx skill ci'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit branch [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit checkout [NAME] BRANCH'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit merge [NAME] BRANCH'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit stash [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit diff [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit log [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit add [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit commit [NAME] -m "msg"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --dry-run --hooks'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_gem_home'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_ruby'

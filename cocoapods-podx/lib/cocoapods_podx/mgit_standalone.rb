@@ -31,8 +31,8 @@ module CocoapodsPodx
       @project_directory = find_project_directory(Dir.pwd)
       @pod_names = []
       @dry_run = false
-      parse_arguments(argv.dup)
       CocoapodsPodx::Runtime.configure(project_directory: project_directory)
+      parse_arguments(argv.dup)
     end
 
     def run
@@ -178,6 +178,10 @@ module CocoapodsPodx
     def extract_checkout_branch_from_arguments!
       return unless @checkout_mode
 
+      if @pod_names.length == 1 && overlay_target_name?(@pod_names.first)
+        raise Pod::Informative, "缺少 checkout 目标分支：mgit checkout #{@pod_names.first} BRANCH"
+      end
+
       @checkout_branch = @pod_names.pop.to_s.strip
       raise Pod::Informative, '请指定 checkout 目标分支，例如：mgit checkout release/5.14.2' if @checkout_branch.empty?
     end
@@ -185,8 +189,16 @@ module CocoapodsPodx
     def extract_merge_branch_from_arguments!
       return unless @merge_mode
 
+      if @pod_names.length == 1 && overlay_target_name?(@pod_names.first)
+        raise Pod::Informative, "缺少 merge 来源分支：mgit merge #{@pod_names.first} BRANCH"
+      end
+
       @merge_branch = @pod_names.pop.to_s.strip
       raise Pod::Informative, '请指定 merge 来源分支，例如：mgit merge develop' if @merge_branch.empty?
+    end
+
+    def overlay_target_name?(name)
+      supported_overlay_names.include?(name.to_s)
     end
 
     def git_action_mode?
@@ -411,6 +423,7 @@ module CocoapodsPodx
         mgit 是多仓库 git 命令入口，无需 CocoaPods：
           mgit branch [NAME]
           mgit checkout [NAME] BRANCH
+          mgit merge [NAME] BRANCH
           mgit stash [NAME]
           mgit status [NAME]
           mgit diff [NAME]

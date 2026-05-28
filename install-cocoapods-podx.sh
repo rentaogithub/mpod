@@ -67,6 +67,20 @@ repair_ffi_extensions() {
 
 repair_ffi_extensions
 
+generate_build_shims() {
+  mkdir -p "$PLUGIN_DIR/bin"
+  for name in podx mgit; do
+    source_path="$PLUGIN_DIR/lib/cocoapods_podx/shims/$name"
+    destination_path="$PLUGIN_DIR/bin/$name"
+    if [ ! -f "$source_path" ]; then
+      echo "Missing command shim template: $source_path" >&2
+      exit 1
+    fi
+    cp "$source_path" "$destination_path"
+    chmod +x "$destination_path"
+  done
+}
+
 install_command_shims() {
   if [ "$PUBLISH_ONLY_MODE" = "1" ]; then
     pod_dir="${COCOAPODS_PODX_BIN_DIR:-$HOME/.local/bin}"
@@ -160,6 +174,9 @@ copy_command_shim() {
   source_path="$SCRIPT_DIR/bin/$name"
   if [ ! -f "$source_path" ]; then
     source_path="$SCRIPT_DIR/cocoapods-podx/bin/$name"
+  fi
+  if [ ! -f "$source_path" ]; then
+    source_path="$SCRIPT_DIR/cocoapods-podx/lib/cocoapods_podx/shims/$name"
   fi
   if [ ! -f "$source_path" ]; then
     source_path="$(GEM_HOME="$COCOAPODS_GEM_HOME" GEM_PATH="$COCOAPODS_GEM_HOME" ruby -e 'require "rubygems"; spec = Gem::Specification.find_by_name("cocoapods-podx"); puts File.join(spec.full_gem_path, "bin", ARGV[0])' "$name" 2>/dev/null || true)"
@@ -259,6 +276,7 @@ else
 fi
 
 if [ "$LOCAL_INSTALL_MODE" = "1" ]; then
+  generate_build_shims
   (cd "$PLUGIN_DIR" && gem build cocoapods-podx.gemspec >/dev/null)
   GEM_FILE="$PLUGIN_DIR/cocoapods-podx-$VERSION.gem"
   if [ ! -f "$GEM_FILE" ]; then

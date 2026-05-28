@@ -29,6 +29,20 @@ if [ ! -f "$GEMSPEC_PATH" ]; then
   exit 1
 fi
 
+generate_build_shims() {
+  mkdir -p "$PLUGIN_DIR/bin"
+  for name in podx mgit; do
+    source_path="$PLUGIN_DIR/lib/cocoapods_podx/shims/$name"
+    destination_path="$PLUGIN_DIR/bin/$name"
+    if [ ! -f "$source_path" ]; then
+      echo "Missing command shim template: $source_path" >&2
+      exit 1
+    fi
+    cp "$source_path" "$destination_path"
+    chmod +x "$destination_path"
+  done
+}
+
 CURRENT_VERSION="$(ruby -e "spec = Gem::Specification.load(ARGV[0]); abort('Failed to load gemspec') unless spec; puts spec.version" "$GEMSPEC_PATH")"
 LATEST_NEXUS_VERSION=""
 
@@ -115,6 +129,7 @@ else
 fi
 
 cd "$PLUGIN_DIR"
+generate_build_shims
 gem build cocoapods-podx.gemspec
 find "$PLUGIN_DIR" -maxdepth 1 -name 'cocoapods-podx-*.gem' ! -name "cocoapods-podx-$VERSION.gem" -delete
 
