@@ -122,6 +122,8 @@ module CocoapodsPodx
           @publish_pipeline_gate = true
         when '--no-pipeline-gate'
           @skip_publish_pipeline_gate = true
+        when '--no-publish-lock'
+          @skip_publish_lock = true
         when '--no-hermes'
           @jenkins_hermes_analysis = false
         when '--yes'
@@ -249,6 +251,7 @@ module CocoapodsPodx
           --publish-password PASSWORD
           --pipeline-gate
           --no-pipeline-gate
+          --no-publish-lock
           --lines N
           --limit N
           --no-hermes

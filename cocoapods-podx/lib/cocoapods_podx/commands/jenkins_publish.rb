@@ -1,4 +1,5 @@
 require 'digest'
+require 'fileutils'
 require 'net/http'
 require 'open3'
 require 'time'
@@ -19,25 +20,90 @@ module CocoapodsPodx
         channels = @pod_names.empty? ? [job_profile[:default_channel]] : @pod_names
 
         branch = jenkins_publish_branch
-        channels.each do |channel|
-          target = jenkins_deploy_target(channel)
-          validate_jenkins_publish_target!(job_profile, target)
-          validate_jenkins_publish_branch!(branch, target)
-          run_publish_pipeline_gate_if_needed!(target)
+        with_jenkins_publish_lock(job_profile, branch, channels) do
+          channels.each do |channel|
+            target = jenkins_deploy_target(channel)
+            validate_jenkins_publish_target!(job_profile, target)
+            validate_jenkins_publish_branch!(branch, target)
+            run_publish_pipeline_gate_if_needed!(target)
 
-          print_publish_header(branch, target)
-          rows = publish_git_rows(branch)
-          print_publish_git_table(rows)
-          validate_publish_remote_release_branches!(branch, rows, target)
-          params = jenkins_build_params(job_profile, branch, target)
-          if @dry_run
-            Pod::UI.puts '【打包结果】dry-run，不触发 Jenkins 打包'
-          else
-            print_jenkins_progress('等待 Jenkins 打包...')
-            trigger_jenkins_build_with_auto_fix_retry(params, target[:name])
-            sync_local_overlay_repos_after_publish(branch)
+            print_publish_header(branch, target)
+            rows = publish_git_rows(branch)
+            print_publish_git_table(rows)
+            validate_publish_remote_release_branches!(branch, rows, target)
+            params = jenkins_build_params(job_profile, branch, target)
+            if @dry_run
+              Pod::UI.puts '【打包结果】dry-run，不触发 Jenkins 打包'
+            else
+              print_jenkins_progress('等待 Jenkins 打包...')
+              trigger_jenkins_build_with_auto_fix_retry(params, target[:name])
+            end
           end
         end
+      end
+
+      def with_jenkins_publish_lock(job_profile, branch, channels)
+        return yield if @dry_run || @skip_publish_lock
+
+        FileUtils.mkdir_p(publish_lock_directory)
+        lock_path = publish_lock_path(job_profile)
+        File.open(lock_path, File::RDWR | File::CREAT, 0o644) do |lock|
+          unless lock.flock(File::LOCK_EX | File::LOCK_NB)
+            raise Pod::Informative, "当前工程已有 podx publish 正在执行：#{publish_lock_summary(lock_path)}。如确认需要并行触发，请加 --no-publish-lock。"
+          end
+
+          write_publish_lock(lock, job_profile, branch, channels)
+          yield
+        ensure
+          FileUtils.rm_f(lock_path)
+        end
+      end
+
+      def publish_lock_directory
+        base_dir = respond_to?(:project_directory, true) ? project_directory : Dir.pwd
+        File.join(base_dir, '.podx', 'locks')
+      end
+
+      def publish_lock_path(job_profile)
+        File.join(publish_lock_directory, "publish-#{publish_lock_job_key(job_profile)}.lock")
+      end
+
+      def publish_lock_job_key(job_profile)
+        job_profile.fetch(:job_name, configured_jenkins_job_name).to_s.gsub(/[^0-9A-Za-z._-]+/, '_')
+      end
+
+      def write_publish_lock(lock, job_profile, branch, channels)
+        lock.rewind
+        lock.truncate(0)
+        lock.write([
+          "pid=#{Process.pid}",
+          "job=#{job_profile.fetch(:job_name, configured_jenkins_job_name)}",
+          "branch=#{branch}",
+          "channels=#{Array(channels).join(',')}",
+          "started_at=#{Time.now.strftime('%Y-%m-%d %H:%M:%S')}",
+        ].join("\n"))
+        lock.write("\n")
+        lock.flush
+      end
+
+      def publish_lock_summary(lock_path)
+        return lock_path unless File.exist?(lock_path)
+
+        data = File.read(lock_path)
+        pid = data[/^pid=(.+)$/, 1]
+        job = data[/^job=(.+)$/, 1]
+        branch = data[/^branch=(.+)$/, 1]
+        channels = data[/^channels=(.+)$/, 1]
+        started_at = data[/^started_at=(.+)$/, 1]
+        parts = []
+        parts << "PID #{pid}" if pid && !pid.empty?
+        parts << "job #{job}" if job && !job.empty?
+        parts << "分支 #{branch}" if branch && !branch.empty?
+        parts << "渠道 #{channels}" if channels && !channels.empty?
+        parts << "开始时间 #{started_at}" if started_at && !started_at.empty?
+        parts.empty? ? lock_path : parts.join('，')
+      rescue
+        lock_path
       end
 
       def sync_local_overlay_repos_after_publish(jenkins_branch)

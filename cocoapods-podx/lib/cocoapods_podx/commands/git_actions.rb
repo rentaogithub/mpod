@@ -119,7 +119,31 @@ module CocoapodsPodx
                 end
               end
             when 'stash'
-              if status.empty?
+              if @stash_list_mode
+                stash_lines = git_stash_lines(path)
+                if stash_lines.empty?
+                  rows << [name, branch || 'detached', 'empty', '-', path]
+                  skipped_count += 1
+                else
+                  rows << [name, branch || 'detached', 'stash-list', git_action_summary(stash_lines), path]
+                  detail_sections << [name, stash_lines]
+                  done_count += 1
+                end
+              elsif @stash_apply_mode
+                stash_ref = @stash_ref.to_s.strip
+                stash_ref = 'stash@{0}' if stash_ref.empty?
+                if git_stash_lines(path).empty?
+                  rows << [name, branch || 'detached', 'skip', 'stash empty', path]
+                  skipped_count += 1
+                elsif @dry_run
+                  rows << [name, branch || 'detached', 'dry-run', "apply #{stash_ref}", path]
+                  done_count += 1
+                else
+                  run_git!(path, 'stash', 'apply', stash_ref)
+                  rows << [name, branch || 'detached', 'stash-applied', stash_ref, path]
+                  done_count += 1
+                end
+              elsif status.empty?
                 rows << [name, branch || 'detached', 'skip', 'clean', path]
                 skipped_count += 1
               elsif @dry_run
@@ -436,7 +460,7 @@ module CocoapodsPodx
         change = case status.to_s
                  when 'skip', 'clean'
                    '-'
-                 when 'dry-run', 'stashed'
+                 when 'dry-run', 'stashed', 'stash-list', 'stash-applied'
                    detail
                  else
                    git_action_status_label(status)
@@ -469,6 +493,10 @@ module CocoapodsPodx
           '已合并'
         when 'stashed'
           '已储藏'
+        when 'stash-applied'
+          '已恢复'
+        when 'stash-list'
+          '列表'
         when 'missing'
           '缺失'
         when 'not-git'
@@ -561,6 +589,13 @@ module CocoapodsPodx
       def git_remote_head(path, branch)
         stdout, status = Open3.capture2('git', '-C', path, 'rev-parse', "refs/remotes/origin/#{branch}")
         status.success? ? stdout.strip : ''
+      end
+
+      def git_stash_lines(path)
+        stdout, status = Open3.capture2('git', '-C', path, 'stash', 'list')
+        return [] unless status.success?
+
+        stdout.lines.map(&:chomp).reject(&:empty?)
       end
 
       def git_commit_summary(path, commit)

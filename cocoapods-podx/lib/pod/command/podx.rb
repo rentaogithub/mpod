@@ -38,6 +38,7 @@ class Pod::Command::Podx < Pod::Command
             podx init [OPTIONS]            一键初始化工程配置、规则、技能、流程、AI 上下文和 hooks
             podx sync                      同步团队规则、技能、流程、AI 上下文和 hooks
             podx update [NAME] [OPTIONS]   更新 Pod；命中本地组件时先更新本地仓库
+            podx clean NAME                清理指定组件 pod cache，并删除 Pods/NAME
 
       pod 扩展命令:
 
@@ -108,6 +109,8 @@ class Pod::Command::Podx < Pod::Command
             mgit checkout [NAME] BRANCH    只切换指定组件仓库分支
             mgit merge [NAME] BRANCH       合并来源分支到当前同名分支组件仓库
             mgit stash [NAME]              组合执行 git stash push -u
+            mgit stash list [NAME]         查看 stash 列表
+            mgit stash apply NAME          只恢复指定仓库 stash，不提供全量 apply/pop
             mgit status [NAME]             组合查看 git status --short
             mgit diff [NAME]               组合查看 git diff
             mgit log [NAME]                组合查看最近 5 条 git log
@@ -132,6 +135,7 @@ class Pod::Command::Podx < Pod::Command
       ['--list', '查看 overlay 组件的 local/remote 状态。'],
       ['--create-overlay-file', '创建 Podfile.overlay 模板，并加入 Xcode 工程引用。'],
       ['--update', '更新 Podfile.overlay 中命中的本地组件仓库；podx update 会随后执行原生 pod update。'],
+      ['--clean', '清理指定组件 pod cache，并删除 Pods/NAME。'],
       ['--checkout', '组合执行 git checkout BRANCH。'],
       ['--stash', '组合执行 git stash push -u。'],
       ['--status', '组合查看 git status --short。'],
@@ -161,6 +165,7 @@ class Pod::Command::Podx < Pod::Command
       ['--publish-password=PASSWORD', 'Jenkins 发布验证密码；默认交互输入 TestFlight/AppStore 密码，Pgyer 默认空。'],
       ['--pipeline-gate', 'podx publish 触发 Jenkins 前执行 pipeline 总门禁。'],
       ['--no-pipeline-gate', 'podx publish 临时跳过 pipeline 总门禁。'],
+      ['--no-publish-lock', 'podx publish 临时跳过本地并发锁，允许同一工程并行触发。'],
       ['--lines=N', '查看 Jenkins 日志时只显示最后 N 行。'],
       ['--no-hermes', '分析 Jenkins 打包失败时跳过 Hermes 二次分析。'],
       ['--yes', '半自动修复时跳过确认。'],
@@ -193,6 +198,7 @@ class Pod::Command::Podx < Pod::Command
     @checkout_mode = argv.flag?('checkout', false)
     @stash_mode = argv.flag?('stash', false)
     @update_mode = argv.flag?('update', false)
+    @clean_mode = argv.flag?('clean', false)
     @status_mode = argv.flag?('status', false)
     @diff_mode = argv.flag?('diff', false)
     @log_mode = argv.flag?('log', false)
@@ -217,6 +223,7 @@ class Pod::Command::Podx < Pod::Command
     @publish_password = argv.option('publish-password')
     @publish_pipeline_gate = argv.flag?('pipeline-gate', false)
     @skip_publish_pipeline_gate = argv.flag?('no-pipeline-gate', false)
+    @skip_publish_lock = argv.flag?('no-publish-lock', false)
     @jenkins_log_lines = argv.option('lines')
     @jenkins_history_limit = argv.option('limit')
     @jenkins_hermes_analysis = !argv.flag?('no-hermes', false)
@@ -261,6 +268,7 @@ class Pod::Command::Podx < Pod::Command
     help! '当前目录或指定目录下未找到 Podfile。' unless File.exist?(podfile_path)
     return if @git_publish_mode
     return if @update_mode
+    return if @clean_mode
     return if @deps_mode
     return if @rules_mode
     return if @create_overlay_file_mode
@@ -301,6 +309,11 @@ class Pod::Command::Podx < Pod::Command
 
     if @open_mode
       open_project_resource
+      return
+    end
+
+    if @clean_mode
+      clean_pod_cache_and_installed_pods
       return
     end
 
@@ -1021,6 +1034,51 @@ class Pod::Command::Podx < Pod::Command
     end
 
     Pod::UI.puts @dry_run ? "update [dry-run] #{updated_count}" : "update [done] #{updated_count}"
+  end
+
+  def clean_pod_cache_and_installed_pods
+    if @pod_names.empty?
+      raise Pod::Informative, '请指定要清理的组件，例如：podx clean NNRtc'
+    end
+
+    rows = []
+    failures = []
+    @pod_names.uniq.each do |name|
+      cache_result = clean_pod_cache(name)
+      pods_result = clean_installed_pod(name)
+      rows << [name, cache_result, pods_result]
+      failures << "#{name}: #{cache_result}" if cache_result.start_with?('失败')
+    end
+
+    print_box_table(@dry_run ? 'podx clean 预览' : 'podx clean 结果', %w[组件 Cache Pods], rows)
+    raise Pod::Informative, "以下组件 cache 清理失败：\n#{failures.join("\n")}" if failures.any?
+
+    Pod::UI.puts @dry_run ? "clean [dry-run] #{@pod_names.uniq.size}" : "clean [done] #{@pod_names.uniq.size}"
+  end
+
+  def clean_pod_cache(name)
+    return '预览清理' if @dry_run
+
+    output, status = Open3.capture2e('pod', 'cache', 'clean', name, '--all')
+    return '已清理' if status.success?
+
+    "失败 #{output.to_s.gsub(/\s+/, ' ').strip}"
+  end
+
+  def clean_installed_pod(name)
+    paths = installed_pod_paths_for(name)
+    existing_paths = paths.select { |path| File.exist?(path) }
+    return '不存在' if existing_paths.empty?
+    return "预览删除 #{existing_paths.map { |path| File.basename(path) }.join(', ')}" if @dry_run
+
+    existing_paths.each { |path| FileUtils.rm_rf(path) }
+    "已删除 #{existing_paths.map { |path| File.basename(path) }.join(', ')}"
+  end
+
+  def installed_pod_paths_for(name)
+    pod_name = name.to_s.strip
+    base_name = pod_name.split('/').first
+    [pod_name, base_name].uniq.map { |candidate| File.join(project_directory, 'Pods', candidate) }
   end
 
   def podx_update_result_label(plan, updated: nil, dry_run: false)

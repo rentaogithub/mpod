@@ -92,6 +92,7 @@ module CocoapodsPodx
         @merge_mode = true
       when 'stash'
         @stash_mode = true
+        parse_stash_subcommand!(argv)
       when 'status'
         @status_mode = true
       when 'diff'
@@ -116,6 +117,21 @@ module CocoapodsPodx
       normalize_git_add_arguments!
       extract_checkout_branch_from_arguments!
       extract_merge_branch_from_arguments!
+      validate_stash_subcommand_arguments!
+    end
+
+    def parse_stash_subcommand!(argv)
+      subcommand = argv.first.to_s
+      case subcommand
+      when 'apply'
+        @stash_apply_mode = true
+        argv.shift
+      when 'list'
+        @stash_list_mode = true
+        argv.shift
+      when 'pop'
+        raise Pod::Informative, 'mgit 不支持 stash pop；请使用更安全的 mgit stash apply NAME'
+      end
     end
 
     def parse_options(argv)
@@ -197,6 +213,15 @@ module CocoapodsPodx
       @merge_branch = @pod_names.pop.to_s.strip
       raise Pod::Informative, '请指定 merge 来源分支，例如：mgit merge develop' if @merge_branch.empty?
       raise Pod::Informative, "merge 来源分支不能使用示例占位符：#{@merge_branch}，请使用真实分支，例如：mgit merge develop" if mgit_placeholder_argument?(@merge_branch)
+    end
+
+    def validate_stash_subcommand_arguments!
+      return unless @stash_mode
+      return if @stash_list_mode
+      return unless @stash_apply_mode
+      return if @pod_names.length == 1
+
+      raise Pod::Informative, 'mgit stash apply 必须指定一个仓库，例如：mgit stash apply NNBussCom'
     end
 
     def mgit_placeholder_argument?(value)
@@ -436,6 +461,8 @@ module CocoapodsPodx
           mgit checkout [NAME] BRANCH
           mgit merge [NAME] BRANCH
           mgit stash [NAME]
+          mgit stash list [NAME]
+          mgit stash apply NAME
           mgit status [NAME]
           mgit diff [NAME]
           mgit log [NAME] [--limit N]

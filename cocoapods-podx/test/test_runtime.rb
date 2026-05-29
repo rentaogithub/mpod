@@ -12,6 +12,32 @@ module Pod
   end
 end unless defined?(Pod::UI)
 
+module Pod
+  class Command
+    class << self
+      attr_accessor :summary, :description, :arguments
+
+      def options
+        []
+      end
+    end
+
+    def initialize(*); end
+
+    def validate!; end
+
+    def help!(message)
+      raise Pod::Informative, message
+    end
+  end
+end unless defined?(Pod::Command)
+
+module CLAide
+  class Argument
+    def initialize(*); end
+  end
+end unless defined?(CLAide::Argument)
+
 require_relative '../lib/cocoapods_podx/commands/git_actions'
 require_relative '../lib/cocoapods_podx/commands/git_hooks'
 require_relative '../lib/cocoapods_podx/commands/dependency_report'
@@ -26,6 +52,7 @@ require_relative '../lib/cocoapods_podx/publish_only'
 require_relative '../lib/cocoapods_podx/rules'
 require_relative '../lib/cocoapods_podx/runtime'
 require_relative '../lib/cocoapods_podx/shim_generator'
+require_relative '../lib/pod/command/podx'
 
 class CocoapodsPodxRuntimeTest < Minitest::Test
   def setup
@@ -1323,6 +1350,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx workon NNBussCom'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx ship [pgyer|tf|app]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx tools'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx clean NNRtc'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'show_modern_cli_tools'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'workon|dev)'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'diagnose)'
@@ -1348,6 +1376,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline readiness'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --pipeline-gate'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --no-pipeline-gate'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --clean'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --rules'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --pipeline'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx ai init'
@@ -1362,6 +1391,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit checkout [NAME] BRANCH'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit merge [NAME] BRANCH'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit stash [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit stash list [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit stash apply NAME'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit diff [NAME]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit log [NAME]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit add [NAME]'
@@ -2438,7 +2469,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
-  def test_publish_syncs_local_overlay_repos_to_publish_branch_after_success
+  def test_publish_does_not_sync_local_overlay_repos_after_success
     publisher = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
 
@@ -2500,12 +2531,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       publisher.publish_to_jenkins
     end
 
-    assert_equal [
-      ['NNBussCom', false, true, 'release/5.14.3', true],
-      ['NNBasciCommon', false, true, 'release/5.14.3', true]
-    ], publisher.updates
-    assert_includes output, '【本地组件同步】'
-    assert_includes output, '| NNBussCom     | release/5.14.3 | 已同步 |'
+    assert_equal [], publisher.updates
+    refute_includes output, '【本地组件同步】'
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
@@ -2710,6 +2737,150 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     publisher.publish_to_jenkins
 
     assert publisher.triggered
+  end
+
+  def test_publish_lock_blocks_concurrent_publish_for_same_job
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_reader :triggered
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+        @pod_names = []
+        @dry_run = false
+        @triggered = false
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def validate_jenkins_publish_context!; end
+
+      def jenkins_publish_job_profile
+        { default_channel: 'pgyer', job_name: 'nn' }
+      end
+
+      def jenkins_deploy_target(_channel)
+        { name: '蒲公英', value: 'Pgyer,', kind: :app }
+      end
+
+      def validate_jenkins_publish_target!(*); end
+
+      def validate_jenkins_publish_branch!(*); end
+
+      def jenkins_publish_branch
+        'origin/develop'
+      end
+
+      def print_publish_header(*); end
+
+      def publish_git_rows(_branch)
+        []
+      end
+
+      def print_publish_git_table(_rows); end
+
+      def validate_publish_remote_release_branches!(*); end
+
+      def jenkins_build_params(*)
+        {}
+      end
+
+      def print_jenkins_progress(_message); end
+
+      def trigger_jenkins_build_with_auto_fix_retry(*)
+        @triggered = true
+      end
+    end.new(@project_dir)
+
+    lock_dir = File.join(@project_dir, '.podx', 'locks')
+    FileUtils.mkdir_p(lock_dir)
+    lock_path = File.join(lock_dir, 'publish-nn.lock')
+    lock = File.open(lock_path, File::RDWR | File::CREAT, 0o644)
+    lock.write("pid=123\njob=nn\nbranch=origin/develop\nchannels=pgyer\nstarted_at=2026-05-29 10:00:00\n")
+    lock.flush
+    lock.flock(File::LOCK_EX)
+
+    error = assert_raises(Pod::Informative) { publisher.publish_to_jenkins }
+    assert_includes error.message, '当前工程已有 podx publish 正在执行'
+    assert_includes error.message, 'job nn'
+    refute publisher.triggered
+  ensure
+    lock&.flock(File::LOCK_UN)
+    lock&.close
+  end
+
+  def test_publish_lock_can_be_skipped_explicitly
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_reader :triggered
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+        @pod_names = []
+        @dry_run = false
+        @skip_publish_lock = true
+        @triggered = false
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def validate_jenkins_publish_context!; end
+
+      def jenkins_publish_job_profile
+        { default_channel: 'pgyer', job_name: 'nn' }
+      end
+
+      def jenkins_deploy_target(_channel)
+        { name: '蒲公英', value: 'Pgyer,', kind: :app }
+      end
+
+      def validate_jenkins_publish_target!(*); end
+
+      def validate_jenkins_publish_branch!(*); end
+
+      def jenkins_publish_branch
+        'origin/develop'
+      end
+
+      def print_publish_header(*); end
+
+      def publish_git_rows(_branch)
+        []
+      end
+
+      def print_publish_git_table(_rows); end
+
+      def validate_publish_remote_release_branches!(*); end
+
+      def jenkins_build_params(*)
+        {}
+      end
+
+      def print_jenkins_progress(_message); end
+
+      def trigger_jenkins_build_with_auto_fix_retry(*)
+        @triggered = true
+      end
+    end.new(@project_dir)
+
+    lock_dir = File.join(@project_dir, '.podx', 'locks')
+    FileUtils.mkdir_p(lock_dir)
+    lock_path = File.join(lock_dir, 'publish-nn.lock')
+    lock = File.open(lock_path, File::RDWR | File::CREAT, 0o644)
+    lock.flock(File::LOCK_EX)
+
+    publisher.publish_to_jenkins
+
+    assert publisher.triggered
+  ensure
+    lock&.flock(File::LOCK_UN)
+    lock&.close
   end
 
   def test_jenkins_build_fallback_progress_only_says_switch_when_next_url_exists
@@ -4461,6 +4632,122 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
+  def test_mgit_stash_apply_requires_one_repo_name
+    Dir.chdir(@project_dir) do
+      error = assert_raises(Pod::Informative) do
+        CocoapodsPodx::MgitStandalone.new(['stash', 'apply'])
+      end
+      assert_includes error.message, 'mgit stash apply 必须指定一个仓库'
+
+      error = assert_raises(Pod::Informative) do
+        CocoapodsPodx::MgitStandalone.new(['stash', 'apply', 'NNLibrary', 'NNBussCom'])
+      end
+      assert_includes error.message, 'mgit stash apply 必须指定一个仓库'
+    end
+  end
+
+  def test_mgit_stash_pop_is_not_supported
+    Dir.chdir(@project_dir) do
+      error = assert_raises(Pod::Informative) do
+        CocoapodsPodx::MgitStandalone.new(['stash', 'pop', 'NNLibrary'])
+      end
+      assert_includes error.message, 'mgit 不支持 stash pop'
+    end
+  end
+
+  def test_mgit_stash_apply_single_repo_parses_safely
+    Dir.chdir(@project_dir) do
+      command = CocoapodsPodx::MgitStandalone.new(['stash', 'apply', 'NNLibrary'])
+      assert command.instance_variable_get(:@stash_mode)
+      assert command.instance_variable_get(:@stash_apply_mode)
+      assert_equal ['NNLibrary'], command.instance_variable_get(:@pod_names)
+    end
+  end
+
+  def test_git_actions_stash_apply_uses_git_stash_apply
+    Dir.mktmpdir('cocoapods-podx-stash-apply') do |path|
+      helper = Class.new do
+        include CocoapodsPodx::Commands::GitActions
+
+        attr_reader :commands
+
+        def initialize(path)
+          @path = path
+          @stash_mode = true
+          @stash_apply_mode = true
+          @pod_names = ['NNLibrary']
+          @dry_run = false
+          @commands = []
+        end
+
+        def commit_targets(_entries)
+          [{ name: 'NNLibrary', path: @path }]
+        end
+
+        def git_work_tree?(_path); true; end
+
+        def git_branch_for(_path); 'develop'; end
+
+        def git_status_lines(_path); []; end
+
+        def git_stash_lines(_path)
+          ['stash@{0}: On develop: mgit stash']
+        end
+
+        def run_git!(path, *args)
+          @commands << [path, args]
+          ''
+        end
+      end.new(path)
+
+      original_puts = Pod::UI.method(:puts)
+      Pod::UI.define_singleton_method(:puts) { |_message = ''| }
+      helper.git_action_repos([])
+
+      assert_includes helper.commands, [path, ['stash', 'apply', 'stash@{0}']]
+    ensure
+      Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    end
+  end
+
+  def test_git_actions_stash_list_is_read_only
+    Dir.mktmpdir('cocoapods-podx-stash-list') do |path|
+      helper = Class.new do
+        include CocoapodsPodx::Commands::GitActions
+
+        def initialize(path)
+          @path = path
+          @stash_mode = true
+          @stash_list_mode = true
+          @pod_names = []
+          @dry_run = false
+        end
+
+        def commit_targets(_entries)
+          [{ name: 'main', path: @path }]
+        end
+
+        def git_work_tree?(_path); true; end
+
+        def git_branch_for(_path); 'develop'; end
+
+        def git_status_lines(_path); []; end
+
+        def git_stash_lines(_path)
+          ['stash@{0}: On develop: mgit stash']
+        end
+      end.new(path)
+
+      original_puts = Pod::UI.method(:puts)
+      Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+      output, = capture_io { helper.git_action_repos([]) }
+
+      assert_includes output, 'stash@{0}: On develop: mgit stash'
+    ensure
+      Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    end
+  end
+
   def test_git_actions_checkout_table_uses_three_aligned_columns
     helper = Class.new do
       include CocoapodsPodx::Commands::GitActions
@@ -4753,5 +5040,61 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_equal './Development Pods/NNLibrary', options[:path]
     assert File.directory?(File.join(@project_dir, 'Development Pods', 'NNLibrary', '.git'))
+  end
+
+  def test_podx_clean_cleans_cache_and_removes_installed_pod
+    FileUtils.mkdir_p(File.join(@project_dir, 'Pods', 'NNRtc'))
+    File.write(File.join(@project_dir, 'Pods', 'NNRtc', 'README.md'), 'cached')
+
+    command = Pod::Command::Podx.allocate
+    command.instance_variable_set(:@project_directory, @project_dir)
+    command.instance_variable_set(:@pod_names, ['NNRtc'])
+    command.instance_variable_set(:@dry_run, false)
+    cache_names = []
+    command.define_singleton_method(:clean_pod_cache) do |name|
+      cache_names << name
+      '已清理'
+    end
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      command.send(:clean_pod_cache_and_installed_pods)
+    end
+
+    assert_equal ['NNRtc'], cache_names
+    refute File.exist?(File.join(@project_dir, 'Pods', 'NNRtc'))
+    assert_includes output, '【podx clean 结果】'
+    assert_includes output, '| NNRtc | 已清理 | 已删除 NNRtc |'
+    assert_includes output, 'clean [done] 1'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_podx_clean_subspec_removes_root_pod_directory
+    FileUtils.mkdir_p(File.join(@project_dir, 'Pods', 'JXPagingView'))
+
+    command = Pod::Command::Podx.allocate
+    command.instance_variable_set(:@project_directory, @project_dir)
+    command.instance_variable_set(:@pod_names, ['JXPagingView/Paging'])
+    command.instance_variable_set(:@dry_run, false)
+    command.define_singleton_method(:clean_pod_cache) { |_name| '已清理' }
+
+    command.send(:clean_pod_cache_and_installed_pods)
+
+    refute File.exist?(File.join(@project_dir, 'Pods', 'JXPagingView'))
+  end
+
+  def test_podx_clean_requires_component_name
+    command = Pod::Command::Podx.allocate
+    command.instance_variable_set(:@project_directory, @project_dir)
+    command.instance_variable_set(:@pod_names, [])
+    command.instance_variable_set(:@dry_run, false)
+
+    error = assert_raises(Pod::Informative) do
+      command.send(:clean_pod_cache_and_installed_pods)
+    end
+
+    assert_includes error.message, '请指定要清理的组件'
   end
 end
