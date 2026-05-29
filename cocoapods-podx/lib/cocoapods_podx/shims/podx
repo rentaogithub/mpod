@@ -129,7 +129,7 @@ upgrade_cocoapods_podx() {
   gem install --local --ignore-dependencies --force --no-document "$gem_file"
 
   installed_dir="$(GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_by_name("cocoapods-podx"); puts spec.full_gem_path')"
-  command_dir="$(dirname "$0")"
+  command_dir="${COCOAPODS_PODX_COMMAND_DIR:-$(dirname "$0")}"
   if [ -w "$command_dir" ]; then
     install_upgrade_shim "$installed_dir/bin/podx" "$command_dir/podx"
     install_upgrade_shim "$installed_dir/bin/mgit" "$command_dir/mgit"
@@ -142,6 +142,18 @@ upgrade_cocoapods_podx() {
   echo "cocoapods-podx [upgraded] $target_version"
 }
 
+exec_upgrade_from_temp_shim() {
+  current_version="$1"
+  target_version="$2"
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/cocoapods-podx-self-upgrade.XXXXXX")"
+  tmp_shim="$tmp_dir/podx"
+  cp "$0" "$tmp_shim"
+  chmod +x "$tmp_shim"
+  COCOAPODS_PODX_COMMAND_DIR="$(dirname "$0")" \
+  COCOAPODS_PODX_SELF_UPGRADE_DIR="$tmp_dir" \
+  exec "$tmp_shim" __upgrade "$current_version" "$target_version"
+}
+
 install_upgrade_shim() {
   source_path="$1"
   target_path="$2"
@@ -151,8 +163,8 @@ install_upgrade_shim() {
   cp "$source_path" "$tmp_path"
   chmod +x "$tmp_path"
   if [ "$target_real_path" = "$running_path" ]; then
-    # Do not replace the shell script while the shell is still reading it.
-    (sh -c 'sleep 1; mv -f "$1" "$2"' sh "$tmp_path" "$target_path" >/dev/null 2>&1 &)
+    echo "Warning: 跳过正在执行的 shim 刷新：$target_path" >&2
+    rm -f "$tmp_path"
     return 0
   fi
   mv -f "$tmp_path" "$target_path"
@@ -317,8 +329,16 @@ case "$1" in
     ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts "cocoapods-podx #{spec ? spec.version : "unknown"}"'
     ;;
   upgrade)
-    upgrade_cocoapods_podx "$(current_podx_version)" "$2"
+    exec_upgrade_from_temp_shim "$(current_podx_version)" "$2"
     exit $?
+    ;;
+  __upgrade)
+    upgrade_cocoapods_podx "$2" "$3"
+    status=$?
+    if [ -n "${COCOAPODS_PODX_SELF_UPGRADE_DIR:-}" ]; then
+      rm -rf "$COCOAPODS_PODX_SELF_UPGRADE_DIR"
+    fi
+    exit $status
     ;;
   workon|dev)
     shift
