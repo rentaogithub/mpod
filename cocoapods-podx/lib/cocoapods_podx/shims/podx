@@ -146,8 +146,15 @@ install_upgrade_shim() {
   source_path="$1"
   target_path="$2"
   tmp_path="${target_path}.tmp.$$"
+  running_path="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)/$(basename "$0")"
+  target_real_path="$(cd "$(dirname "$target_path")" 2>/dev/null && pwd -P)/$(basename "$target_path")"
   cp "$source_path" "$tmp_path"
   chmod +x "$tmp_path"
+  if [ "$target_real_path" = "$running_path" ]; then
+    # Do not replace the shell script while the shell is still reading it.
+    (sh -c 'sleep 1; mv -f "$1" "$2"' sh "$tmp_path" "$target_path" >/dev/null 2>&1 &)
+    return 0
+  fi
   mv -f "$tmp_path" "$target_path"
 }
 
