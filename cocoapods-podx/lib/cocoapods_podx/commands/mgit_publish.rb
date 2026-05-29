@@ -7,6 +7,7 @@ module CocoapodsPodx
       def publish_git_branches
         target_branch = @pod_names.first.to_s.strip
         raise Pod::Informative, '请指定目标分支，例如：mgit publish release/5.14.2' if target_branch.empty?
+        validate_mgit_publish_target_branch!(target_branch)
 
         extra_args = @pod_names.drop(1)
         raise Pod::Informative, "mgit publish 只支持一个目标分支，无法识别：#{extra_args.join(' ')}" if extra_args.any?
@@ -326,6 +327,33 @@ module CocoapodsPodx
         pattern = Regexp.new(pattern_source)
         match = branch.match(pattern)
         match && match[1]
+      end
+
+      def validate_mgit_publish_target_branch!(branch)
+        if mgit_publish_placeholder_branch?(branch)
+          raise Pod::Informative, "发布分支不能使用示例占位符：#{branch}，请使用真实分支，例如：mgit publish release/5.14.2"
+        end
+
+        pattern_source = mgit_publish_version_config[:branch_pattern].to_s
+        return if pattern_source.empty?
+
+        pattern = Regexp.new(pattern_source)
+        return if branch.match?(pattern)
+
+        raise Pod::Informative, "发布分支格式不正确：#{branch}，必须匹配 #{mgit_publish_branch_pattern_label(pattern_source)}，例如：mgit publish release/5.14.2"
+      end
+
+      def mgit_publish_placeholder_branch?(branch)
+        text = branch.to_s.strip
+        return true if text.match?(/\A\[.+\]\z/)
+        return true if %w[BRANCH VERSION BUILD NAME N].include?(text)
+        return true if text.match?(%r{\Arelease/[a-z](?:\.[a-z])+\z}i)
+
+        false
+      end
+
+      def mgit_publish_branch_pattern_label(pattern_source)
+        pattern_source.include?('release/') ? 'release/x.x.x' : pattern_source
       end
 
       def mgit_publish_build_number(version)

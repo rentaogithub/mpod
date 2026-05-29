@@ -115,6 +115,20 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
   end
 
+  def test_mgit_checkout_and_merge_reject_help_placeholders
+    Dir.chdir(@project_dir) do
+      checkout_error = assert_raises(Pod::Informative) do
+        CocoapodsPodx::MgitStandalone.new(['checkout', 'BRANCH'])
+      end
+      assert_includes checkout_error.message, 'checkout 目标分支不能使用示例占位符'
+
+      merge_error = assert_raises(Pod::Informative) do
+        CocoapodsPodx::MgitStandalone.new(['merge', 'release/x.x.x'])
+      end
+      assert_includes merge_error.message, 'merge 来源分支不能使用示例占位符'
+    end
+  end
+
   def test_pod_overlay_accepts_pod_entries
     overlay = CocoapodsPodx::Runtime::PodOverlay.new
     overlay.instance_eval(<<~RUBY)
@@ -1360,6 +1374,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod --version'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'latest_podx_version_from_nexus'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'upgrade_cocoapods_podx'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'install_upgrade_shim'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '版本号不合法'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'exit $?'
+    refute_includes CocoapodsPodx::ShimGenerator.podx, 'cp "$installed_dir/bin/podx" "$command_dir/podx"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'cocoapods-podx $current_version 已是最新版本，无需更新'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'GEM_HOME="$gem_home"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'RUBYLIB="$podx_lib'
@@ -2979,6 +2997,40 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal '501410', publisher.mgit_publish_build_number('5.14.10')
   end
 
+  def test_mgit_publish_rejects_placeholder_release_branch
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+    end.new
+
+    error = assert_raises(Pod::Informative) do
+      publisher.validate_mgit_publish_target_branch!('release/x.x.x')
+    end
+
+    assert_includes error.message, '发布分支不能使用示例占位符'
+    assert_includes error.message, 'mgit publish release/5.14.2'
+
+    error = assert_raises(Pod::Informative) do
+      publisher.validate_mgit_publish_target_branch!('BRANCH')
+    end
+
+    assert_includes error.message, '发布分支不能使用示例占位符'
+  end
+
+  def test_mgit_publish_validates_configured_release_branch_pattern
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+    end.new
+
+    publisher.validate_mgit_publish_target_branch!('release/5.14.2')
+
+    error = assert_raises(Pod::Informative) do
+      publisher.validate_mgit_publish_target_branch!('feature/5.14.2')
+    end
+
+    assert_includes error.message, '发布分支格式不正确'
+    assert_includes error.message, 'release/x.x.x'
+  end
+
   def test_mgit_publish_project_specific_actions_are_opt_in
     original_config_path = CocoapodsPodx::Runtime.instance_variable_get(:@config_path)
     original_project_config = CocoapodsPodx::Runtime.instance_variable_get(:@project_config)
@@ -4499,6 +4551,28 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       helper.validate_jenkins_publish_branch!('origin/develop', name: 'TestFlight', value: 'TestFlight,')
     end
     assert_includes error.message, '只能发布 release/x.x.x 分支'
+
+    error = assert_raises(Pod::Informative) do
+      helper.validate_jenkins_publish_branch!('origin/release/x.x.x', name: '蒲公英', value: 'Pgyer,')
+    end
+    assert_includes error.message, '发布分支不能使用示例占位符'
+  end
+
+  def test_jenkins_publish_rejects_help_placeholders
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+
+    error = assert_raises(Pod::Informative) do
+      helper.jenkins_deploy_target('[pgyer|tf|app]')
+    end
+    assert_includes error.message, '发布渠道不能使用示例占位符'
+
+    helper.instance_variable_set(:@publish_branch, 'release/x.x.x')
+    error = assert_raises(Pod::Informative) do
+      helper.jenkins_publish_branch
+    end
+    assert_includes error.message, '发布分支不能使用示例占位符'
   end
 
   def test_jenkins_publish_requires_remote_release_branch_for_main_and_components

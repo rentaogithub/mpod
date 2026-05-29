@@ -102,6 +102,14 @@ install_command_shims() {
   rm -f "$pod_dir/pox"
 }
 
+install_generated_shim() {
+  destination="$1"
+  tmp_path="${destination}.tmp.$$"
+  cat > "$tmp_path"
+  chmod +x "$tmp_path"
+  mv -f "$tmp_path" "$destination"
+}
+
 ensure_publish_only_path() {
   [ "$PUBLISH_ONLY_MODE" = "1" ] || return 0
 
@@ -191,9 +199,9 @@ copy_command_shim() {
       printf 'export GEM_HOME="%s"\n' "$COCOAPODS_GEM_HOME"
       printf 'export GEM_PATH="%s${GEM_PATH:+:$GEM_PATH}"\n' "$COCOAPODS_GEM_HOME"
       tail -n +2 "$source_path"
-    } > "$destination"
+    } | install_generated_shim "$destination"
   else
-    cp "$source_path" "$destination"
+    install_generated_shim "$destination" < "$source_path"
   fi
 }
 

@@ -536,6 +536,16 @@ class Pod::Command::Podx < Pod::Command
 
     @checkout_branch = @pod_names.pop.to_s.strip
     help! '请指定 checkout 目标分支，例如：mgit checkout release/5.14.2' if @checkout_branch.empty?
+    help! "checkout 目标分支不能使用示例占位符：#{@checkout_branch}，请使用真实分支，例如：mgit checkout release/5.14.2" if placeholder_argument?(@checkout_branch)
+  end
+
+  def placeholder_argument?(value)
+    text = value.to_s.strip
+    return true if text.match?(/\A\[.+\]\z/)
+    return true if %w[BRANCH VERSION BUILD NAME N].include?(text)
+    return true if text.match?(%r{\Arelease/[xyz](?:\.[xyz])+\z}i)
+
+    false
   end
 
   def project_directory

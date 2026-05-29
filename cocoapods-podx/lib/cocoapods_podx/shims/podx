@@ -92,6 +92,13 @@ upgrade_cocoapods_podx() {
     target_version="$(latest_podx_version_from_nexus)"
   fi
 
+  case "$target_version" in
+    ""|*[!0-9.]*|.*|*..*|*.)
+      echo "cocoapods-podx [upgrade] 版本号不合法：$target_version" >&2
+      return 1
+      ;;
+  esac
+
   if [ -n "$target_version" ] && [ "$target_version" = "$current_version" ]; then
     echo "cocoapods-podx $current_version 已是最新版本，无需更新"
     return 0
@@ -124,9 +131,8 @@ upgrade_cocoapods_podx() {
   installed_dir="$(GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_by_name("cocoapods-podx"); puts spec.full_gem_path')"
   command_dir="$(dirname "$0")"
   if [ -w "$command_dir" ]; then
-    cp "$installed_dir/bin/podx" "$command_dir/podx"
-    cp "$installed_dir/bin/mgit" "$command_dir/mgit"
-    chmod +x "$command_dir/podx" "$command_dir/mgit"
+    install_upgrade_shim "$installed_dir/bin/podx" "$command_dir/podx"
+    install_upgrade_shim "$installed_dir/bin/mgit" "$command_dir/mgit"
   else
     echo "Warning: 无法刷新命令 shim：$command_dir 不可写" >&2
   fi
@@ -134,6 +140,15 @@ upgrade_cocoapods_podx() {
   rm -rf "$tmp_dir"
   COCOAPODS_PODX_UPGRADED=1
   echo "cocoapods-podx [upgraded] $target_version"
+}
+
+install_upgrade_shim() {
+  source_path="$1"
+  target_path="$2"
+  tmp_path="${target_path}.tmp.$$"
+  cp "$source_path" "$tmp_path"
+  chmod +x "$tmp_path"
+  mv -f "$tmp_path" "$target_path"
 }
 
 current_podx_version() {
@@ -296,6 +311,7 @@ case "$1" in
     ;;
   upgrade)
     upgrade_cocoapods_podx "$(current_podx_version)" "$2"
+    exit $?
     ;;
   workon|dev)
     shift
@@ -314,6 +330,7 @@ case "$1" in
     if [ "$1" = "dry-run" ]; then
       shift
       run_pod_overlay --dry-run --publish "$@"
+      exit $?
     fi
     run_pod_overlay --publish "$@"
     ;;
@@ -363,14 +380,17 @@ case "$1" in
     if [ "$1" = "publish" ]; then
       shift
       run_pod_overlay --dry-run --publish "$@"
+      exit $?
     fi
     if [ "$1" = "hooks" ]; then
       shift
       run_pod_overlay --dry-run --hooks "$@"
+      exit $?
     fi
     if [ "$1" = "skill" ]; then
       shift
       run_pod_overlay --dry-run --skill "$@"
+      exit $?
     fi
     run_pod_overlay --dry-run "$@"
     ;;

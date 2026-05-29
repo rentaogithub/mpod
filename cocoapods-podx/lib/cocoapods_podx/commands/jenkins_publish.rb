@@ -852,6 +852,10 @@ module CocoapodsPodx
 
       def jenkins_deploy_target(channel)
         normalized = channel.to_s.strip.downcase
+        if jenkins_placeholder_argument?(normalized)
+          raise Pod::Informative, "发布渠道不能使用示例占位符：#{channel}，支持 pgyer/tf/app/framework"
+        end
+
         case normalized
         when 'pgyer', 'pgy', '蒲公英'
           { kind: :app, name: '蒲公英', value: 'Pgyer,' }
@@ -975,11 +979,17 @@ module CocoapodsPodx
       def jenkins_publish_branch
         branch = @publish_branch || main_app_branch
         raise Pod::Informative, '无法获取当前 git 分支，请使用 --publish-branch=origin/xxx 指定。' if branch.nil? || branch.empty?
+        if jenkins_placeholder_argument?(branch)
+          raise Pod::Informative, "发布分支不能使用示例占位符：#{branch}，请使用真实分支，例如：podx publish --branch release/5.14.2"
+        end
 
         branch.start_with?('origin/') ? branch : "origin/#{branch}"
       end
 
       def validate_jenkins_publish_branch!(branch, target)
+        if jenkins_placeholder_argument?(branch.to_s.sub(%r{\Aorigin/}, ''))
+          raise Pod::Informative, "发布分支不能使用示例占位符：#{branch}，请使用真实分支，例如：podx publish --branch release/5.14.2"
+        end
         return if target[:kind] == :framework
         return if target[:value] == 'Pgyer,'
 
@@ -992,6 +1002,16 @@ module CocoapodsPodx
         end
 
         raise Pod::Informative, "#{target[:name]} 只能发布 release/x.x.x 分支，当前分支为 #{branch}"
+      end
+
+      def jenkins_placeholder_argument?(value)
+        text = value.to_s.strip
+        return false if text.empty?
+        return true if text.match?(/\A\[.+\]\z/)
+        return true if %w[BRANCH VERSION BUILD NAME N].include?(text)
+        return true if text.match?(%r{\Arelease/[xyz](?:\.[xyz])+\z}i)
+
+        false
       end
 
       def validate_publish_remote_release_branches!(branch, rows, target)
