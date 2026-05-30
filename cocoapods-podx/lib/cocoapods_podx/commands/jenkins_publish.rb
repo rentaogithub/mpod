@@ -2091,21 +2091,13 @@ module CocoapodsPodx
         response = request_jenkins(uri, request)
         return offset unless response.is_a?(Net::HTTPSuccess)
 
-        response.body.to_s.each_line do |line|
-          clean_line = strip_ansi(line).strip
-          next if clean_line.empty?
-          next unless jenkins_progress_line?(clean_line)
-
-          print_jenkins_progress(clean_line)
-        end
-
         response['X-Text-Size'].to_i.nonzero? || offset
       rescue
         offset
       end
 
       def print_jenkins_progress(message)
-        line = "【打包进度】#{truncate_display(message, 180)}"
+        line = "【打包进度】#{truncate_display(message, 100)}"
         if $stdout.tty?
           $stdout.print("\r#{line}#{' ' * 20}")
           $stdout.flush
@@ -2119,10 +2111,6 @@ module CocoapodsPodx
 
         $stdout.print("\r#{' ' * 140}\r")
         $stdout.flush
-      end
-
-      def jenkins_progress_line?(line)
-        line.match?(/BUILD|SUCCESS|ERROR|FAIL|Finished:|仓库|分支|Commit|Commit信息|发布渠道|开始执行|构建产物|上传IPA|上传成功|构建完成|BUILD FAILED|error:/i)
       end
 
       def jenkins_failure_lines(build_url)

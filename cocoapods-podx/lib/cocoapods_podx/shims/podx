@@ -197,7 +197,30 @@ run_publish_only() {
 
 run_pod_overlay() {
   detect_podx_lib_and_gem_env
-  COCOAPODS_PODX_INTERNAL=1 exec pod podx "$@"
+  COCOAPODS_PODX_INTERNAL=1 exec ruby -e '
+value_options = %w[
+  --branch
+  --publish-branch
+  --job
+  --jenkins-job
+  --jenkins-url
+  --publish-password
+  --fix-job
+  --lines
+  --limit
+]
+normalized = []
+args = ARGV.dup
+until args.empty?
+  arg = args.shift
+  if value_options.include?(arg) && !args.empty? && !args.first.start_with?("-")
+    normalized << "#{arg}=#{args.shift}"
+  else
+    normalized << arg
+  end
+end
+exec("pod", "podx", *normalized)
+' -- "$@"
 }
 
 show_modern_cli_tools() {
@@ -291,6 +314,9 @@ pod 扩展命令:
   podx skill verify NAME           # 校验 skill 前置条件
   podx skill run NAME              # 执行已验证的浅层 skill
   podx publish [pgyer|tf|app]      # 触发 Jenkins 发布
+  podx publish --branch=develop    # 指定远端分支发布；也支持 --branch develop
+  podx publish tf --branch=release/x.x.x   # 指定 release 分支发布 TestFlight
+  podx publish app --branch=release/x.x.x  # 指定 release 分支发布 App Store
   podx publish --pipeline-gate     # 发布前执行 pipeline 总门禁
   podx publish --no-pipeline-gate  # 临时跳过发布前 pipeline 总门禁
   podx publish log [BUILD]         # 查看 Jenkins 日志

@@ -1384,6 +1384,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish history [N]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish doctor [BUILD]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish fix [BUILD]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --branch=develop'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish tf --branch=release/x.x.x'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish app --branch=release/x.x.x'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'cocoapods_podx/publish_only'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx hooks install'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx skill ci'
@@ -1403,6 +1406,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_podx_lib_path'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod_available'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod --version'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'normalized << "#{arg}=#{args.shift}"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'latest_podx_version_from_nexus'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'upgrade_cocoapods_podx'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'exec_upgrade_from_temp_shim'
@@ -2904,10 +2908,40 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
     end
 
-    assert_includes output, 'Jenkins 地址不可用：http://jenkins.example.com/job/first/，切换备用：http://jenkins.example.com/job/second/'
+    assert_includes output, 'Jenkins 地址不可用：http://jenkins.example.com/job/first/，切换备用'
     assert_includes output, 'Jenkins 地址不可用：http://jenkins.example.com/job/second/'
     refute_includes output, '切换备用：http://jenkins.example.com/job/first/'
     refute_includes output, 'failed http://jenkins.example.com/job/second/'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_jenkins_progress_log_only_updates_offset_without_printing_console_noise
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      def apply_jenkins_auth(_request); end
+
+      def request_jenkins(_uri, _request)
+        response = Net::HTTPOK.new('1.1', '200', 'OK')
+        response['X-Text-Size'] = '321'
+        response.instance_variable_set(:@read, true)
+        response.body = [
+          '[11:54:50]: Set Team id to: M4HNX7MUD2 for target: NNIM for build configuration: Debug',
+          '$ xcodebuild -resolvePackageDependencies -workspace /Users/a1/.jenkins/workspace/nn/NNIM.xcworkspace',
+          'ERROR: Failed to load AuthKey file.'
+        ].join("\n")
+        response
+      end
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      assert_equal 321, publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 0)
+    end
+
+    assert_equal '', output
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end

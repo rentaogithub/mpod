@@ -80,12 +80,13 @@ class Pod::Command::Podx < Pod::Command
             podx skill verify NAME         校验 skill 前置条件，不执行任务
             podx skill run NAME            执行已验证的浅层 skill
             podx publish [pgyer|tf|app]    触发 Jenkins 发布；默认 nn job 支持蒲公英/TestFlight/AppStore
+            podx publish --branch=develop  指定远端分支发布；也支持 --branch develop
             podx publish --job JOB         指定 Jenkins job 名；按该 job 参数能力发布
             podx publish --job nnrtc-ios-build
                                            触发 nnrtc-ios-build 打 Framework
-            podx publish tf --branch release/x.x.x
+            podx publish tf --branch=release/x.x.x
                                            指定 release 分支发布 TestFlight
-            podx publish app --branch release/x.x.x
+            podx publish app --branch=release/x.x.x
                                            指定 release 分支发布 APP Store
             podx publish history [N]       查看 Jenkins 最近 N 次构建；默认 10 次
             podx publish log [BUILD]       查看 Jenkins 构建日志；不传 BUILD 默认 lastBuild
