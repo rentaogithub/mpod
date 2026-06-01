@@ -3731,6 +3731,176 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
+  def test_git_actions_merge_includes_components_changed_on_source_branch
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-merge-extra')
+    paths = {
+      'main' => File.join(project_dir, 'main'),
+      'NNBussCom' => File.join(project_dir, 'Development Pods', 'NNBussCom'),
+      'NNIMManager' => File.join(project_dir, 'Development Pods', 'NNIMManager'),
+      'NNBasciCommon' => File.join(project_dir, 'Development Pods', 'NNBasciCommon'),
+      'NNRealReachability' => File.join(project_dir, 'Development Pods', 'NNRealReachability')
+    }
+    paths.values.each { |path| FileUtils.mkdir_p(path) }
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :commands
+
+      def initialize(paths)
+        @paths = paths
+        @project_directory = paths.fetch('main')
+        @merge_mode = true
+        @merge_branch = 'develop'
+        @pod_names = []
+        @dry_run = false
+        @commands = []
+        @branches = paths.values.each_with_object({}) { |path, memo| memo[path] = 'feature/5.14.2_websocket' }
+        @heads = Hash.new('1111111111111111111111111111111111111111')
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def local_repo_path_for(name)
+        @paths.fetch(name)
+      end
+
+      def supported_overlay_names
+        %w[NNBussCom NNBasciCommon NNRealReachability NNIMManager]
+      end
+
+      def merge_branch_component_changed?(name)
+        %w[NNBasciCommon NNRealReachability].include?(name)
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(path)
+        @branches[path]
+      end
+
+      def git_status_lines(_path)
+        []
+      end
+
+      def git_dirty?(_path)
+        false
+      end
+
+      def git_full_head(path)
+        @heads[path]
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        @heads[path] = '2222222222222222222222222222222222222222' if args == ['merge', '--no-edit', '--no-stat', 'origin/develop']
+        ''
+      end
+
+      def checkout_branch!(path, branch)
+        @commands << [path, ['checkout_branch!', branch]]
+        @branches[path] = branch
+      end
+
+      def git_commit_summary(_path, commit)
+        "#{commit[0, 6]} merge"
+      end
+    end.new(paths)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.git_action_repos([{ name: 'NNBussCom' }, { name: 'NNIMManager' }])
+    end
+
+    assert_includes output, '| NNBussCom          | feature/5.14.2_websocket | 已合并 |'
+    assert_includes output, '| NNIMManager        | feature/5.14.2_websocket | 已合并 |'
+    assert_includes output, '| NNBasciCommon      | feature/5.14.2_websocket | 已合并 |'
+    assert_includes output, '| NNRealReachability | feature/5.14.2_websocket | 已合并 |'
+    assert_includes helper.commands, [paths.fetch('NNBasciCommon'), ['checkout_branch!', 'develop']]
+    assert_includes helper.commands, [paths.fetch('NNBasciCommon'), ['pull', '--ff-only', 'origin', 'develop']]
+    assert_includes helper.commands, [paths.fetch('NNBasciCommon'), ['checkout_branch!', 'feature/5.14.2_websocket']]
+    assert_includes helper.commands, [paths.fetch('NNBasciCommon'), ['merge', '--no-edit', '--no-stat', 'origin/develop']]
+    assert_includes helper.commands, [paths.fetch('NNRealReachability'), ['merge', '--no-edit', '--no-stat', 'origin/develop']]
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_git_actions_merge_writes_all_supported_components_to_overlay
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-merge-overlay')
+    overlay_path = File.join(project_dir, 'Podfile.overlay')
+    File.write(overlay_path, <<~RUBY)
+      # 本地源码覆盖配置
+      # 示例：
+
+      pod 'NNBussCom'
+    RUBY
+
+    paths = {
+      'main' => project_dir,
+      'NNBussCom' => File.join(project_dir, 'Development Pods', 'NNBussCom'),
+      'NNBasciCommon' => File.join(project_dir, 'Development Pods', 'NNBasciCommon'),
+      'NNRealReachability' => File.join(project_dir, 'Development Pods', 'NNRealReachability')
+    }
+    paths.values.each { |path| FileUtils.mkdir_p(path) }
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      def initialize(paths, overlay_path)
+        @paths = paths
+        @overlay_path = overlay_path
+        @project_directory = paths.fetch('main')
+        @merge_mode = true
+        @merge_branch = 'develop'
+        @pod_names = []
+        @dry_run = false
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def overlay_path
+        @overlay_path
+      end
+
+      def local_repo_path_for(name)
+        @paths.fetch(name)
+      end
+
+      def supported_overlay_names
+        %w[NNBussCom NNBasciCommon NNRealReachability]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(_path)
+        'feature/5.14.2_websocket'
+      end
+
+      def git_status_lines(_path)
+        []
+      end
+    end.new(paths, overlay_path)
+
+    helper.send(:sync_overlay_to_all_merge_components, [{ name: 'NNBussCom' }])
+
+    content = File.read(overlay_path)
+    assert_includes content, "pod 'NNBussCom'"
+    assert_includes content, "pod 'NNBasciCommon'"
+    assert_includes content, "pod 'NNRealReachability'"
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
   def test_git_hooks_install_pre_commit_protects_configured_files
     project_dir = Dir.mktmpdir('cocoapods-podx-hooks')
     main_path = File.join(project_dir, 'main')
@@ -4686,6 +4856,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         CocoapodsPodx::MgitStandalone.new(['stash', 'pop', 'NNLibrary'])
       end
       assert_includes error.message, 'mgit 不支持 stash pop'
+    end
+  end
+
+  def test_mgit_stash_help_prints_help_instead_of_treating_help_as_repo
+    Dir.chdir(@project_dir) do
+      command = CocoapodsPodx::MgitStandalone.new(['stash', 'help'])
+      assert command.instance_variable_get(:@help_mode)
+      assert command.instance_variable_get(:@stash_mode)
+      assert_empty command.instance_variable_get(:@pod_names)
     end
   end
 

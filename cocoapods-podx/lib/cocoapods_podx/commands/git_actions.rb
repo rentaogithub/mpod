@@ -406,6 +406,8 @@ module CocoapodsPodx
       end
 
       def commit_targets(entries)
+        return merge_commit_targets(entries) if @merge_mode && @pod_names.empty? && !@merge_branch.to_s.strip.empty?
+
         if @pod_names.empty?
           [{ name: 'main', path: project_directory }] + entries.map do |entry|
             { name: entry[:name], path: local_repo_path_for(entry[:name]) }
@@ -415,6 +417,168 @@ module CocoapodsPodx
             name == 'main' ? { name: 'main', path: project_directory } : { name: name, path: local_repo_path_for(name) }
           end
         end
+      end
+
+      def merge_commit_targets(entries)
+        prepare_full_merge_source_branch(merge_component_names(entries))
+        sync_overlay_to_all_merge_components(entries)
+        targets = [{ name: 'main', path: project_directory }]
+        seen = { 'main' => true }
+        merge_component_names(entries).each do |name|
+          next if seen[name]
+
+          targets << { name: name, path: local_repo_path_for(name) }
+          seen[name] = true
+        end
+
+        targets
+      end
+
+      def prepare_full_merge_source_branch(names)
+        return if @dry_run
+
+        source_branch = @merge_branch.to_s.strip
+        target_branch = main_git_action_branch.to_s.strip
+        return if source_branch.empty? || target_branch.empty? || source_branch == target_branch
+
+        failures = []
+        prepared_count = 0
+        Array(names).each do |name|
+          path = local_repo_path_for(name)
+          next unless File.directory?(path)
+
+          unless git_work_tree?(path)
+            failures << "#{name}: 不是 git 仓库：#{path}"
+            next
+          end
+
+          current_branch = git_branch_for(path)
+          status = git_status_lines(path)
+          unless Array(status).empty?
+            failures << "#{name}: 本地仓库存在未提交修改：#{path}"
+            next
+          end
+
+          begin
+            run_git!(path, 'fetch', 'origin')
+            checkout_branch!(path, source_branch) unless current_branch == source_branch
+            run_git!(path, 'pull', '--ff-only', 'origin', source_branch)
+            checkout_branch!(path, target_branch) unless source_branch == target_branch
+            prepared_count += 1
+          rescue => e
+            failures << "#{name}: #{e.message}"
+            begin
+              checkout_branch!(path, current_branch) if current_branch && git_branch_for(path) != current_branch
+            rescue
+              nil
+            end
+          end
+        end
+
+        if failures.any?
+          raise Pod::Informative, "merge 前准备来源分支失败：\n#{failures.join("\n")}"
+        end
+
+        Pod::UI.puts "merge [prepare] #{source_branch} 本地组件 #{prepared_count} 个" if prepared_count.positive?
+      end
+
+      def merge_component_names(entries)
+        overlay_names = entries.map { |entry| entry[:name].to_s }.reject(&:empty?).uniq
+        candidate_names = if respond_to?(:supported_overlay_names, true)
+          Array(supported_overlay_names).map(&:to_s)
+        else
+          overlay_names
+        end
+        (overlay_names + candidate_names).reject(&:empty?).uniq
+      end
+
+      def sync_overlay_to_all_merge_components(entries)
+        return if @dry_run
+        return unless respond_to?(:overlay_path, true)
+
+        names = merge_component_names(entries)
+        return if names.empty?
+
+        current_names = entries.map { |entry| entry[:name].to_s }.reject(&:empty?).uniq
+        missing_names = names - current_names
+        return if missing_names.empty?
+
+        write_overlay_names(names)
+        Pod::UI.puts "Podfile.overlay [updated] merge 本地组件 #{names.length} 个"
+      end
+
+      def write_overlay_names(names)
+        lines = if File.exist?(overlay_path)
+          File.readlines(overlay_path, chomp: true)
+        else
+          default_merge_overlay_lines
+        end
+
+        header_lines = lines.take_while { |line| !line.match?(/^\s*pod\s+['"][^'"]+['"]/) }
+        header_lines = trim_git_action_blank_lines(header_lines)
+        content_lines = header_lines + [''] + names.map { |name| "pod '#{name}'" }
+        content_lines = trim_git_action_blank_lines(content_lines)
+        content_lines << ''
+        File.write(overlay_path, content_lines.join("\n"))
+      end
+
+      def default_merge_overlay_lines
+        [
+          '# 本地源码覆盖配置',
+          '# 这里只声明哪些组件切到本地源码。',
+          '# 未出现在 Podfile.overlay 中的组件默认走远端。',
+          '# 不要写 localWork、branch 或其他参数。',
+          '# 示例：',
+          "# pod 'NNBussCom'                    # 业务组件组切本地",
+          "# pod 'NNBasciCommon'               # 单个组件切本地",
+          "# pod 'NNIMManager'                 # 单个组件切本地",
+          "# pod 'NNApperance'                 # 单个组件切本地",
+          ''
+        ]
+      end
+
+      def trim_git_action_blank_lines(lines)
+        result = Array(lines).dup
+        result.pop while result.any? && result.last.to_s.strip.empty?
+        result
+      end
+
+      def merge_branch_component_changed?(name)
+        repo_path = local_repo_path_for(name)
+        return false unless File.directory?(repo_path)
+        return false unless git_work_tree?(repo_path)
+
+        source_branch = @merge_branch.to_s.strip
+        target_branch = main_git_action_branch.to_s.strip
+        return false if source_branch.empty?
+
+        fetch_branch_quietly(repo_path, source_branch)
+        fetch_branch_quietly(repo_path, target_branch) unless target_branch.empty? || target_branch == source_branch
+
+        source_ref = "origin/#{source_branch}"
+        return false unless git_ref_exists?(repo_path, source_ref)
+
+        target_ref = if !target_branch.empty? && git_ref_exists?(repo_path, "origin/#{target_branch}")
+          "origin/#{target_branch}"
+        else
+          'HEAD'
+        end
+
+        stdout, status = Open3.capture2('git', '-C', repo_path, 'rev-list', '--count', "#{target_ref}..#{source_ref}")
+        status.success? && stdout.to_i.positive?
+      rescue
+        false
+      end
+
+      def fetch_branch_quietly(path, branch)
+        return if branch.to_s.strip.empty?
+
+        Open3.capture2e('git', '-C', path, 'fetch', 'origin', branch.to_s)
+      end
+
+      def git_ref_exists?(path, ref)
+        _stdout, status = Open3.capture2('git', '-C', path, 'rev-parse', '--verify', '--quiet', ref)
+        status.success?
       end
 
       def git_action_summary(lines, max_width = 48)

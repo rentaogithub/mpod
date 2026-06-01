@@ -129,6 +129,9 @@ module CocoapodsPodx
       when 'list'
         @stash_list_mode = true
         argv.shift
+      when 'help', '--help', '-h'
+        @help_mode = true
+        argv.shift
       when 'pop'
         raise Pod::Informative, 'mgit 不支持 stash pop；请使用更安全的 mgit stash apply NAME'
       end
