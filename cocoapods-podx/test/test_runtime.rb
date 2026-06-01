@@ -142,6 +142,33 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
   end
 
+  def test_mgit_checkout_accepts_git_style_create_branch_options
+    Dir.chdir(@project_dir) do
+      short = CocoapodsPodx::MgitStandalone.new(['checkout', '-b', 'feature/5.14.5_felix_test'])
+      long = CocoapodsPodx::MgitStandalone.new(['checkout', '--branch', 'feature/5.14.5_felix_test'])
+      long_equal = CocoapodsPodx::MgitStandalone.new(['checkout', '--branch=feature/5.14.5_felix_test'])
+
+      [short, long, long_equal].each do |command|
+        assert command.instance_variable_get(:@checkout_create_branch)
+        assert_equal 'feature/5.14.5_felix_test', command.instance_variable_get(:@checkout_branch)
+        assert_empty command.instance_variable_get(:@pod_names)
+      end
+    end
+  end
+
+  def test_mgit_checkout_create_branch_creates_local_branch_when_remote_missing
+    command = CocoapodsPodx::MgitStandalone.allocate
+    calls = []
+    command.instance_variable_set(:@checkout_create_branch, true)
+    command.define_singleton_method(:git_local_branch_exists?) { |_path, _branch| false }
+    command.define_singleton_method(:git_remote_branch_exists?) { |_path, _branch| false }
+    command.define_singleton_method(:run_git!) { |path, *args| calls << [path, args] }
+
+    command.send(:checkout_branch!, '/tmp/repo', 'feature/5.14.5_felix_test')
+
+    assert_equal [['/tmp/repo', ['checkout', '-b', 'feature/5.14.5_felix_test']]], calls
+  end
+
   def test_mgit_checkout_and_merge_reject_help_placeholders
     Dir.chdir(@project_dir) do
       checkout_error = assert_raises(Pod::Informative) do
@@ -1392,6 +1419,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx skill ci'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit branch [NAME]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit checkout [NAME] BRANCH'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit checkout -b BRANCH'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit merge [NAME] BRANCH'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit stash [NAME]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit stash list [NAME]'
@@ -3226,19 +3254,16 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes error.message, '发布分支不能使用示例占位符'
   end
 
-  def test_mgit_publish_validates_configured_release_branch_pattern
+  def test_mgit_publish_allows_feature_and_release_branches
     publisher = Class.new do
       include CocoapodsPodx::Commands::MgitPublish
     end.new
 
     publisher.validate_mgit_publish_target_branch!('release/5.14.2')
+    publisher.validate_mgit_publish_target_branch!('feature/5.14.5_felix_test')
 
-    error = assert_raises(Pod::Informative) do
-      publisher.validate_mgit_publish_target_branch!('feature/5.14.2')
-    end
-
+    error = assert_raises(Pod::Informative) { publisher.validate_mgit_publish_target_branch!('--branch') }
     assert_includes error.message, '发布分支格式不正确'
-    assert_includes error.message, 'release/x.x.x'
   end
 
   def test_mgit_publish_project_specific_actions_are_opt_in

@@ -334,13 +334,8 @@ module CocoapodsPodx
           raise Pod::Informative, "发布分支不能使用示例占位符：#{branch}，请使用真实分支，例如：mgit publish release/5.14.2"
         end
 
-        pattern_source = mgit_publish_version_config[:branch_pattern].to_s
-        return if pattern_source.empty?
-
-        pattern = Regexp.new(pattern_source)
-        return if branch.match?(pattern)
-
-        raise Pod::Informative, "发布分支格式不正确：#{branch}，必须匹配 #{mgit_publish_branch_pattern_label(pattern_source)}，例如：mgit publish release/5.14.2"
+        text = branch.to_s.strip
+        raise Pod::Informative, "发布分支格式不正确：#{branch}" if text.empty? || text.start_with?('-') || text.match?(/\s/)
       end
 
       def mgit_publish_placeholder_branch?(branch)

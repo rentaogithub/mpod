@@ -108,6 +108,7 @@ class Pod::Command::Podx < Pod::Command
             mgit branch [NAME]             组合查看 git branch
             mgit checkout BRANCH           组合切换本地组件仓库分支
             mgit checkout [NAME] BRANCH    只切换指定组件仓库分支
+            mgit checkout -b BRANCH        组合创建并切换本地新分支
             mgit merge [NAME] BRANCH       合并来源分支到当前同名分支组件仓库
             mgit stash [NAME]              组合执行 git stash push -u
             mgit stash list [NAME]         查看 stash 列表

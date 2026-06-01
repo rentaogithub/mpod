@@ -151,6 +151,9 @@ module CocoapodsPodx
           @dry_run = true
         when '-A', '--all', '.'
           @pod_names << arg
+        when '-b', '--branch'
+          pending_option = arg
+          @checkout_create_branch = true if @checkout_mode
         when '-m', '--message', '--limit', '--base-branch', '--push-mode', '--publish-work-dir', '-edit', '--edit'
           pending_option = arg
         when /\A--message=(.+)\z/
@@ -164,6 +167,9 @@ module CocoapodsPodx
           @git_publish_push_mode = Regexp.last_match(1)
         when /\A--publish-work-dir=(.+)\z/
           @git_publish_work_dir = Regexp.last_match(1)
+        when /\A--branch=(.+)\z/
+          @checkout_create_branch = true if @checkout_mode
+          @checkout_branch = Regexp.last_match(1)
         when /\A(?:-edit|--edit)=(.+)\z/
           (@protected_edit_files ||= []) << Regexp.last_match(1)
         when /\A-/
@@ -189,6 +195,9 @@ module CocoapodsPodx
         @git_publish_push_mode = value
       when '--publish-work-dir'
         @git_publish_work_dir = value
+      when '-b', '--branch'
+        @checkout_create_branch = true if @checkout_mode
+        @checkout_branch = value
       when '-edit', '--edit'
         (@protected_edit_files ||= []) << value
       end
@@ -197,11 +206,11 @@ module CocoapodsPodx
     def extract_checkout_branch_from_arguments!
       return unless @checkout_mode
 
-      if @pod_names.length == 1 && overlay_target_name?(@pod_names.first)
+      if @checkout_branch.to_s.strip.empty? && @pod_names.length == 1 && overlay_target_name?(@pod_names.first)
         raise Pod::Informative, "缺少 checkout 目标分支：mgit checkout #{@pod_names.first} BRANCH"
       end
 
-      @checkout_branch = @pod_names.pop.to_s.strip
+      @checkout_branch = @pod_names.pop.to_s.strip if @checkout_branch.to_s.strip.empty?
       raise Pod::Informative, '请指定 checkout 目标分支，例如：mgit checkout release/5.14.2' if @checkout_branch.empty?
       raise Pod::Informative, "checkout 目标分支不能使用示例占位符：#{@checkout_branch}，请使用真实分支，例如：mgit checkout release/5.14.2" if mgit_placeholder_argument?(@checkout_branch)
     end
@@ -390,6 +399,11 @@ module CocoapodsPodx
     end
 
     def checkout_branch!(path, branch)
+      if @checkout_create_branch && !git_local_branch_exists?(path, branch) && !git_remote_branch_exists?(path, branch)
+        run_git!(path, 'checkout', '-b', branch)
+        return
+      end
+
       if git_local_branch_exists?(path, branch)
         run_git!(path, 'checkout', branch)
       elsif git_remote_branch_exists?(path, branch)
@@ -462,6 +476,8 @@ module CocoapodsPodx
         mgit 是多仓库 git 命令入口，无需 CocoaPods：
           mgit branch [NAME]
           mgit checkout [NAME] BRANCH
+          mgit checkout -b BRANCH
+          mgit checkout --branch BRANCH
           mgit merge [NAME] BRANCH
           mgit stash [NAME]
           mgit stash list [NAME]
