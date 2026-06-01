@@ -3504,6 +3504,20 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
+  def test_podx_init_creates_missing_overlay_file
+    overlay_path = File.join(@project_dir, 'Podfile.overlay')
+    FileUtils.rm_f(overlay_path)
+
+    command = Pod::Command::Podx.allocate
+    command.instance_variable_set(:@project_directory, @project_dir)
+    command.send(:init_project_overlay_file)
+
+    assert File.exist?(overlay_path)
+    content = File.read(overlay_path)
+    assert_includes content, '# 本地源码覆盖配置'
+    assert_includes content, "# pod 'NNBussCom'"
+  end
+
   def test_git_actions_log_limit_falls_back_to_default
     helper = Class.new do
       include CocoapodsPodx::Commands::GitActions
@@ -4073,7 +4087,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_includes rows, ['发布分支', '配置', 'develop->release/x.x.x', 'mgit publish']
     assert_includes rows, ['合并保护', '默认', '还原Podfile.rb', 'pull/merge']
-    assert_includes rows, ['本地产物', '默认', '.mgit-publish/, Development Pods/, .podx/skill_runs.yml, .podx/skill_snapshot.md, .podx/skill_ci.json, .podx/rules_snapshot.json, .podx/pipeline_snapshot.json, .podx/pipeline_report.md', '.gitignore']
+    assert_includes rows, ['本地产物', '默认', '.mgit-publish/, Development Pods/, .podx/skills.yml, .podx/skill_runs.yml, .podx/skill_snapshot.md, .podx/skill_ci.json, .podx/rules_snapshot.json, .podx/pipeline_ci.sh, .podx/pipeline_snapshot.json, .podx/pipeline_report.md', '.gitignore']
     assert_includes rows, ['Podfile分支', '配置', '组件branch->发布分支', 'mgit publish']
     assert_includes rows, ['iOS版本', '配置', '改Version/Build', 'mgit publish']
     refute rows.any? { |row| row.first == 'iOS Build' }
@@ -4091,7 +4105,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     rules = CocoapodsPodx::Rules.local_artifact_gitignore_rules(config_path: config_path)
 
-    assert_equal ['.release-work/', 'Development Pods/', '.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], rules
+    assert_equal ['.release-work/', 'Development Pods/', '.podx/skills.yml', '.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_ci.sh', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], rules
   ensure
     FileUtils.rm_rf(config_dir) if config_dir
   end
@@ -4101,7 +4115,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     missing = rule.missing_gitignore_rules(".mgit-publish/\nDevelopment Pods/\n")
 
-    assert_equal ['.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], missing
+    assert_equal ['.podx/skills.yml', '.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_ci.sh', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], missing
   end
 
   def test_podx_rules_check_fails_when_gitignore_is_missing_rules
@@ -4126,10 +4140,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_includes content, '.mgit-publish/'
     assert_includes content, 'Development Pods/'
+    assert_includes content, '.podx/skills.yml'
     assert_includes content, '.podx/skill_runs.yml'
     assert_includes content, '.podx/skill_snapshot.md'
     assert_includes content, '.podx/skill_ci.json'
     assert_includes content, '.podx/rules_snapshot.json'
+    assert_includes content, '.podx/pipeline_ci.sh'
     assert_includes content, '.podx/pipeline_snapshot.json'
     assert_includes content, '.podx/pipeline_report.md'
   ensure
@@ -4147,7 +4163,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal 'fail', payload['status']
     assert_includes payload['missing_gitignore_rules'], 'Development Pods/'
     assert payload['summaries'].any? { |row| row['rule'] == '本地产物' }
+    assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/skills.yml' }
     assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/rules_snapshot.json' }
+    assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/pipeline_ci.sh' }
     assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/pipeline_snapshot.json' }
     assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/pipeline_report.md' }
   ensure

@@ -111,10 +111,12 @@ module CocoapodsPodx
       DEVELOPMENT_PODS_DIR = 'Development Pods'.freeze
       DEFAULT_PUBLISH_WORK_DIR = '.mgit-publish'.freeze
       DEFAULT_PODX_RUNTIME_ARTIFACTS = %w[
+        .podx/skills.yml
         .podx/skill_runs.yml
         .podx/skill_snapshot.md
         .podx/skill_ci.json
         .podx/rules_snapshot.json
+        .podx/pipeline_ci.sh
         .podx/pipeline_snapshot.json
         .podx/pipeline_report.md
       ].freeze

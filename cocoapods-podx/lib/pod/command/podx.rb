@@ -467,6 +467,9 @@ class Pod::Command::Podx < Pod::Command
     init_project_config
     rows << ['工程配置', '完成', config_path]
 
+    init_project_overlay_file
+    rows << ['本地依赖', '完成', overlay_path]
+
     @pod_names = ['sync']
     run_rules_command
     rows << ['团队规则', '完成', '.gitignore']
@@ -488,6 +491,17 @@ class Pod::Command::Podx < Pod::Command
 
     git_action_print_table("podx #{action} 汇总", %w[项目 状态 说明], rows)
     Pod::UI.puts "podx #{action} [done]"
+  end
+
+  def init_project_overlay_file
+    previous_pod_names = @pod_names
+    previous_disable = @disable
+    @pod_names = []
+    @disable = false
+    create_overlay_file
+  ensure
+    @pod_names = previous_pod_names
+    @disable = previous_disable
   end
 
   def extract_commit_message_from_arguments!
