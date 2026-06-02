@@ -108,10 +108,11 @@ module CocoapodsPodx
               else
                 before_commit = git_full_head(path)
                 run_git!(path, 'fetch', 'origin', @merge_branch)
-                run_git!(path, 'merge', '--no-edit', '--no-stat', "origin/#{@merge_branch}")
-                after_commit = git_full_head(path)
+                after_commit, restored_files = run_git_action_merge!(name, path, before_commit, "origin/#{@merge_branch}")
                 if before_commit != after_commit
-                  rows << [name, branch, 'merged', git_commit_summary(path, after_commit), path]
+                  detail = git_commit_summary(path, after_commit)
+                  detail = "#{detail}; 已还原 #{restored_files.join(', ')}" if restored_files.any?
+                  rows << [name, branch, 'merged', detail, path]
                   done_count += 1
                 else
                   rows << [name, branch, 'up-to-date', '-', path]
@@ -381,6 +382,61 @@ module CocoapodsPodx
         else
           ENV[rule.allow_env] = previous
         end
+      end
+
+      def run_git_action_merge!(name, path, before_commit, source_ref)
+        protected_files = git_action_protected_files_for_merge(name)
+        merge_args = ['merge', '--no-edit', '--no-stat']
+        merge_args << '--no-ff' if protected_files.any?
+        merge_args << source_ref
+        run_git!(path, *merge_args)
+
+        after_commit = git_full_head(path)
+        restored_files = restore_git_action_protected_files_after_merge(path, before_commit, after_commit, protected_files)
+        after_commit = git_full_head(path) if restored_files.any?
+        [after_commit, restored_files]
+      end
+
+      def git_action_protected_files_for_merge(name)
+        return [] unless name.to_s == 'main'
+
+        config_path_value = respond_to?(:config_path, true) ? config_path : nil
+        CocoapodsPodx::Rules.engine(config_path: config_path_value).commit_protection.protected_files
+      rescue
+        CocoapodsPodx::Rules::CommitProtection.new(config: {}).protected_files
+      end
+
+      def restore_git_action_protected_files_after_merge(path, before_commit, after_commit, protected_files)
+        return [] if Array(protected_files).empty?
+        return [] if before_commit.to_s.empty? || after_commit.to_s.empty? || before_commit == after_commit
+
+        restored_files = []
+        Array(protected_files).each do |file|
+          file = file.to_s.strip
+          next if file.empty?
+          next unless git_path_changed_between?(path, before_commit, after_commit, file)
+
+          if git_path_exists_at?(path, before_commit, file)
+            run_git!(path, 'checkout', before_commit, '--', file)
+          else
+            run_git!(path, 'rm', '-f', '--quiet', '--', file)
+          end
+          restored_files << file
+        end
+        return [] if restored_files.empty?
+
+        run_git!(path, 'commit', '--amend', '--no-edit')
+        restored_files
+      end
+
+      def git_path_changed_between?(path, before_commit, after_commit, file)
+        _stdout, status = Open3.capture2('git', '-C', path, 'diff', '--quiet', before_commit, after_commit, '--', file)
+        !status.success?
+      end
+
+      def git_path_exists_at?(path, commit, file)
+        _stdout, status = Open3.capture2('git', '-C', path, 'cat-file', '-e', "#{commit}:#{file}")
+        status.success?
       end
 
       def align_git_action_branch(name, path, branch, status)

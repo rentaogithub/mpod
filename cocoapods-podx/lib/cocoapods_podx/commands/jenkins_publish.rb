@@ -25,6 +25,7 @@ module CocoapodsPodx
             target = jenkins_deploy_target(channel)
             validate_jenkins_publish_target!(job_profile, target)
             validate_jenkins_publish_branch!(branch, target)
+            validate_publish_podfile_component_branches!(branch)
             run_publish_pipeline_gate_if_needed!(target)
 
             print_publish_header(branch, target)
@@ -1140,6 +1141,30 @@ module CocoapodsPodx
           "#{row[:repo]} #{row[:branch]}（#{row[:log]}）"
         end
         raise Pod::Informative, "#{target[:name]} 发布要求 release/x.x.x 分支在远端主工程和依赖组件仓库都存在，未检测到：#{details.join('；')}"
+      end
+
+      def validate_publish_podfile_component_branches!(branch)
+        return unless respond_to?(:podfile_path, true)
+        return unless File.exist?(podfile_path)
+        return unless respond_to?(:declared_branch_for, true)
+
+        expected_branch = normalize_publish_branch_name(branch)
+        mismatches = publish_private_repo_names.map do |name|
+          declared_branch = declared_branch_for(name)
+          next if declared_branch.to_s.strip.empty?
+
+          normalized_declared_branch = normalize_publish_branch_name(declared_branch)
+          next if normalized_declared_branch == expected_branch
+
+          "#{name}: Podfile=#{normalized_declared_branch}, 打包分支=#{expected_branch}"
+        end.compact
+        return if mismatches.empty?
+
+        raise Pod::Informative, "Podfile 中私有组件分支必须与本次打包分支同名，请先调整后再发布：\n#{mismatches.join("\n")}"
+      end
+
+      def normalize_publish_branch_name(branch)
+        branch.to_s.strip.sub(%r{\Aorigin/}, '')
       end
 
       def jenkins_publish_branch_explicit?

@@ -3890,6 +3890,95 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
+  def test_git_actions_merge_restores_main_protected_files
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-merge-protected')
+    main_path = File.join(project_dir, 'main')
+    FileUtils.mkdir_p(main_path)
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :commands
+
+      def initialize(main_path)
+        @project_directory = main_path
+        @merge_mode = true
+        @merge_branch = 'develop'
+        @pod_names = ['main']
+        @dry_run = false
+        @commands = []
+        @branch = 'feature/5.14.2_broadcast'
+        @head = '1111111111111111111111111111111111111111'
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def commit_targets(_entries)
+        [{ name: 'main', path: @project_directory }]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(_path)
+        @branch
+      end
+
+      def git_status_lines(_path)
+        []
+      end
+
+      def git_dirty?(_path)
+        false
+      end
+
+      def git_full_head(_path)
+        @head
+      end
+
+      def git_action_protected_files_for_merge(_name)
+        %w[Podfile.rb]
+      end
+
+      def git_path_changed_between?(_path, _before_commit, _after_commit, file)
+        file == 'Podfile.rb'
+      end
+
+      def git_path_exists_at?(_path, _commit, file)
+        file == 'Podfile.rb'
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        @head = '2222222222222222222222222222222222222222' if args == ['merge', '--no-edit', '--no-stat', '--no-ff', 'origin/develop']
+        @head = '3333333333333333333333333333333333333333' if args == ['commit', '--amend', '--no-edit']
+        ''
+      end
+
+      def git_commit_summary(_path, commit)
+        "#{commit[0, 6]} merge"
+      end
+    end.new(main_path)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.git_action_repos([])
+    end
+
+    assert_includes output, '【merge 结果】'
+    assert_includes output, '| main | feature/5.14.2_broadcast | 已合并 |'
+    assert_includes helper.commands, [main_path, ['merge', '--no-edit', '--no-stat', '--no-ff', 'origin/develop']]
+    assert_includes helper.commands, [main_path, ['checkout', '1111111111111111111111111111111111111111', '--', 'Podfile.rb']]
+    assert_includes helper.commands, [main_path, ['commit', '--amend', '--no-edit']]
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
   def test_git_actions_merge_includes_components_changed_on_source_branch
     project_dir = Dir.mktmpdir('cocoapods-podx-git-merge-extra')
     paths = {
@@ -5290,6 +5379,66 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       helper.jenkins_publish_branch
     end
     assert_includes error.message, '发布分支不能使用示例占位符'
+  end
+
+  def test_jenkins_publish_rejects_podfile_component_branch_mismatch
+    project_dir = Dir.mktmpdir('cocoapods-podx-publish-branch-mismatch')
+    File.write(File.join(project_dir, 'Podfile'), "pod 'NNIMManager', :branch => 'feature/5.14.2_broadcast'\n")
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_accessor :project_dir
+
+      def podfile_path
+        File.join(project_dir, 'Podfile')
+      end
+
+      def publish_private_repo_names
+        %w[NNIMManager NNBussCom]
+      end
+
+      def declared_branch_for(name)
+        { 'NNIMManager' => 'feature/5.14.2_broadcast', 'NNBussCom' => 'develop' }[name]
+      end
+    end.new
+    helper.project_dir = project_dir
+
+    error = assert_raises(Pod::Informative) do
+      helper.validate_publish_podfile_component_branches!('origin/develop')
+    end
+
+    assert_includes error.message, 'Podfile 中私有组件分支必须与本次打包分支同名'
+    assert_includes error.message, 'NNIMManager: Podfile=feature/5.14.2_broadcast, 打包分支=develop'
+    refute_includes error.message, 'NNBussCom'
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_jenkins_publish_accepts_podfile_component_branch_with_origin_prefix
+    project_dir = Dir.mktmpdir('cocoapods-podx-publish-branch-match')
+    File.write(File.join(project_dir, 'Podfile'), "pod 'NNIMManager', :branch => 'develop'\n")
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_accessor :project_dir
+
+      def podfile_path
+        File.join(project_dir, 'Podfile')
+      end
+
+      def publish_private_repo_names
+        %w[NNIMManager]
+      end
+
+      def declared_branch_for(_name)
+        'origin/develop'
+      end
+    end.new
+    helper.project_dir = project_dir
+
+    helper.validate_publish_podfile_component_branches!('origin/develop')
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
   end
 
   def test_jenkins_publish_requires_remote_release_branch_for_main_and_components
