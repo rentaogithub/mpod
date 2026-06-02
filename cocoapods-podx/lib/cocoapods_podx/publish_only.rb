@@ -116,7 +116,7 @@ module CocoapodsPodx
           end
 
           @pod_names << arg
-        when '--job', '--jenkins-job', '--jenkins-url', '--branch', '--publish-branch', '--publish-password', '--lines', '--limit', '--fix-job'
+        when '--job', '--jenkins-job', '--jenkins-url', '--branch', '--publish-branch', '--publish-password', '--notify-wechat', '--lines', '--limit', '--fix-job'
           pending_option = arg
         when '--pipeline-gate'
           @publish_pipeline_gate = true
@@ -124,6 +124,8 @@ module CocoapodsPodx
           @skip_publish_pipeline_gate = true
         when '--no-publish-lock'
           @skip_publish_lock = true
+        when '--no-wechat-notify'
+          @notify_wechat = 'false'
         when '--no-hermes'
           @jenkins_hermes_analysis = false
         when '--yes'
@@ -140,6 +142,8 @@ module CocoapodsPodx
           @publish_branch = Regexp.last_match(1)
         when /\A--publish-password=(.+)\z/
           @publish_password = Regexp.last_match(1)
+        when /\A--notify-wechat=(.+)\z/
+          @notify_wechat = Regexp.last_match(1)
         when /\A--lines=(.+)\z/
           @jenkins_log_lines = Regexp.last_match(1)
         when /\A--limit=(.+)\z/
@@ -172,6 +176,8 @@ module CocoapodsPodx
         @publish_branch = value
       when '--publish-password'
         @publish_password = value
+      when '--notify-wechat'
+        @notify_wechat = value
       when '--lines'
         @jenkins_log_lines = value
       when '--limit'
@@ -249,6 +255,8 @@ module CocoapodsPodx
           --job JOB
           --jenkins-url URL
           --publish-password PASSWORD
+          --notify-wechat BOOL
+          --no-wechat-notify
           --pipeline-gate
           --no-pipeline-gate
           --no-publish-lock

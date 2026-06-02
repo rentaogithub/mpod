@@ -33,7 +33,7 @@ class Pod::Command::Podx < Pod::Command
 
       pod 命令:
 
-            podx install [OPTIONS]         安装 Pods，等同 pod install
+            podx install [OPTIONS]         安装 Pods，等同 pod install；支持 --repo-update
             podx repo update [OPTIONS]     更新 Specs 仓库，等同 pod repo update
             podx init [OPTIONS]            一键初始化工程配置、规则、技能、流程、AI 上下文和 hooks
             podx sync                      同步团队规则、技能、流程、AI 上下文和 hooks
@@ -165,6 +165,8 @@ class Pod::Command::Podx < Pod::Command
       ['--branch=BRANCH', '指定 Jenkins 发布远端分支；tf/app 必须是 release/x.x.x，等同 --publish-branch。'],
       ['--publish-branch=BRANCH', '指定 Jenkins 发布远端分支；tf/app 必须是 release/x.x.x。'],
       ['--publish-password=PASSWORD', 'Jenkins 发布验证密码；默认交互输入 TestFlight/AppStore 密码，Pgyer 默认空。'],
+      ['--notify-wechat=BOOL', '控制 Jenkins 企业微信机器人通知，支持 true/false。'],
+      ['--no-wechat-notify', '关闭 Jenkins 企业微信机器人通知，等同 --notify-wechat=false。'],
       ['--pipeline-gate', 'podx publish 触发 Jenkins 前执行 pipeline 总门禁。'],
       ['--no-pipeline-gate', 'podx publish 临时跳过 pipeline 总门禁。'],
       ['--no-publish-lock', 'podx publish 临时跳过本地并发锁，允许同一工程并行触发。'],
@@ -223,6 +225,9 @@ class Pod::Command::Podx < Pod::Command
     @jenkins_url = argv.option('jenkins-url')
     @publish_branch = argv.option('branch') || argv.option('publish-branch')
     @publish_password = argv.option('publish-password')
+    @notify_wechat = argv.option('notify-wechat')
+    wechat_notify_flag = argv.flag?('wechat-notify')
+    @notify_wechat = wechat_notify_flag.to_s unless wechat_notify_flag.nil?
     @publish_pipeline_gate = argv.flag?('pipeline-gate', false)
     @skip_publish_pipeline_gate = argv.flag?('no-pipeline-gate', false)
     @skip_publish_lock = argv.flag?('no-publish-lock', false)

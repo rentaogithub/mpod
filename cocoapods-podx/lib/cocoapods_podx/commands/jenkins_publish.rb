@@ -953,6 +953,7 @@ module CocoapodsPodx
           params['VERIFICATION_PASSWORD'] = jenkins_publish_password_for(target)
         end
         apply_jenkins_podx_source_param!(params, job_profile)
+        apply_jenkins_wechat_notify_param!(params, job_profile)
         params
       end
 
@@ -968,7 +969,8 @@ module CocoapodsPodx
               job_name: job_name,
               default_channel: 'pgyer',
               branch_param: parameter_names.include?('branch') ? 'branch' : 'BRANCH',
-              source_param: jenkins_podx_source_param_name(parameter_names)
+              source_param: jenkins_podx_source_param_name(parameter_names),
+              notify_param: jenkins_wechat_notify_param_name(parameter_names)
             }
           elsif parameter_names.include?('BRANCH') || framework_job_name?(job_name)
             {
@@ -976,7 +978,8 @@ module CocoapodsPodx
               job_name: job_name,
               default_channel: 'framework',
               branch_param: 'BRANCH',
-              source_param: jenkins_podx_source_param_name(parameter_names)
+              source_param: jenkins_podx_source_param_name(parameter_names),
+              notify_param: jenkins_wechat_notify_param_name(parameter_names)
             }
           else
             default_jenkins_publish_job_profile(job_name)
@@ -990,7 +993,8 @@ module CocoapodsPodx
           job_name: job_name,
           default_channel: 'framework',
           branch_param: 'BRANCH',
-          source_param: nil
+          source_param: nil,
+          notify_param: nil
         } if framework_job_name?(job_name)
 
         {
@@ -998,7 +1002,8 @@ module CocoapodsPodx
           job_name: job_name,
           default_channel: 'pgyer',
           branch_param: 'branch',
-          source_param: nil
+          source_param: nil,
+          notify_param: nil
         }
       end
 
@@ -1008,11 +1013,41 @@ module CocoapodsPodx
         end
       end
 
+      def jenkins_wechat_notify_param_name(parameter_names)
+        %w[NOTIFY_WECHAT_ON_SUCCESS notify_wechat_on_success notify-wechat-on-success NOTIFY_WECHAT WECHAT_NOTIFY notify_wechat wechat_notify notify-wechat wechat-notify NotifyWechat notifyWechat].find do |name|
+          parameter_names.include?(name)
+        end || %w[NO_WECHAT_NOTIFY no_wechat_notify no-wechat-notify DISABLE_WECHAT_NOTIFY disable_wechat_notify disable-wechat-notify].find do |name|
+          parameter_names.include?(name)
+        end
+      end
+
       def apply_jenkins_podx_source_param!(params, job_profile)
         source_param = job_profile[:source_param].to_s
         return if source_param.empty?
 
         params[source_param] = source_param == 'PODX_PUBLISH' ? '1' : 'podx publish'
+      end
+
+      def apply_jenkins_wechat_notify_param!(params, job_profile)
+        return if @notify_wechat.nil?
+
+        notify_param = job_profile[:notify_param].to_s
+        notify_param = 'NOTIFY_WECHAT_ON_SUCCESS' if notify_param.empty?
+        notify_enabled = jenkins_wechat_notify_enabled?
+        params[notify_param] = jenkins_wechat_disable_param?(notify_param) ? (!notify_enabled).to_s : notify_enabled.to_s
+      end
+
+      def jenkins_wechat_notify_enabled?
+        normalized = @notify_wechat.to_s.strip.downcase
+        return true if %w[true 1 yes y on enable enabled].include?(normalized)
+        return false if %w[false 0 no n off disable disabled].include?(normalized)
+
+        raise Pod::Informative, "notify-wechat 只能是 true/false，当前为：#{@notify_wechat}"
+      end
+
+      def jenkins_wechat_disable_param?(param)
+        param.to_s.match?(/\A(?:NO_|DISABLE_)/i) || param.to_s.match?(/\A(?:no_|disable_)/) ||
+          param.to_s.match?(/\A(?:no-|disable-)/)
       end
 
       def framework_job_name?(job_name)
@@ -1158,6 +1193,7 @@ module CocoapodsPodx
         Pod::UI.puts "【打包分支】#{jenkins_branch}"
         Pod::UI.puts '【打包来源】远端分支 HEAD，不包含本地未提交代码'
         Pod::UI.puts "【发布渠道】#{target[:name]}"
+        Pod::UI.puts "【企业微信通知】#{jenkins_wechat_notify_enabled? ? '开启' : '关闭'}" unless @notify_wechat.nil?
       end
 
       def git_repository_name
@@ -1725,7 +1761,9 @@ module CocoapodsPodx
           duration = format_jenkins_duration(data['duration'])
           if result == 'SUCCESS'
             finish_jenkins_progress
+            channel_build_number = jenkins_channel_build_number(build_url)
             Pod::UI.puts "【打包结果】成功 #{target_name} ##{build_number} #{duration}"
+            Pod::UI.puts "【发布结果】Jenkins构建号 ##{build_number} | 发布渠道 #{target_name} | 渠道构建号 #{channel_build_number}"
             return
           end
 
@@ -2128,6 +2166,41 @@ module CocoapodsPodx
         (matched.empty? ? lines.last(20) : matched.last(20))
       rescue => e
         ["无法读取 Jenkins 失败日志：#{e.message}"]
+      end
+
+      def jenkins_channel_build_number(build_url)
+        lines = jenkins_console_lines(build_url)
+        extract_jenkins_channel_build_number(lines) || '-'
+      rescue
+        '-'
+      end
+
+      def jenkins_console_lines(build_url)
+        uri = URI.join(build_url, 'consoleText')
+        request = Net::HTTP::Get.new(uri)
+        apply_jenkins_auth(request)
+        response = request_jenkins(uri, request)
+        return [] unless response.is_a?(Net::HTTPSuccess)
+
+        safe_jenkins_text(response.body).lines.map { |line| strip_ansi(line).strip }.reject(&:empty?)
+      end
+
+      def extract_jenkins_channel_build_number(lines)
+        patterns = [
+          /BUILD_DESCRIPTION\s*=\s*[^,\n]+,\s*([0-9]+(?:\.[0-9]+)*)/i,
+          /Description set:\s*[^,\n]+,\s*([0-9]+(?:\.[0-9]+)*)/i,
+          /蒲公英版本\s*[:=：].*?\(build\s*\[?([0-9]+(?:\.[0-9]+)*)/i,
+          /发布渠道\s*[:=：].*?Build\s+([0-9]+(?:\.[0-9]+)*)/i,
+          /(?:渠道构建号|发布渠道构建号|发布构建号|蒲公英构建号|TestFlight构建号|AppStore构建号|App Store构建号)\s*[:=：]\s*([0-9]+(?:\.[0-9]+)*)/i,
+          /(?:build_number|Build Number|Build版本号)\s*[:=：]\s*([0-9]+(?:\.[0-9]+)*)/i
+        ]
+        lines.reverse_each do |line|
+          patterns.each do |pattern|
+            match = line.match(pattern)
+            return match[1] if match
+          end
+        end
+        nil
       end
 
       def jenkins_primary_failure_lines(lines)

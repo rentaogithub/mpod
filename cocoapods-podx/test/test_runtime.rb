@@ -55,6 +55,25 @@ require_relative '../lib/cocoapods_podx/shim_generator'
 require_relative '../lib/pod/command/podx'
 
 class CocoapodsPodxRuntimeTest < Minitest::Test
+  class FakeArgv
+    def initialize(options: {}, flags: {})
+      @options = options
+      @flags = flags
+    end
+
+    def option(name)
+      @options[name]
+    end
+
+    def flag?(name, default = nil)
+      @flags.key?(name) ? @flags[name] : default
+    end
+
+    def arguments!
+      []
+    end
+  end
+
   def setup
     @project_dir = Dir.mktmpdir('cocoapods-podx-test')
     File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
@@ -1377,6 +1396,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx workon NNBussCom'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx ship [pgyer|tf|app]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx tools'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx install --repo-update'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx clean NNRtc'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'show_modern_cli_tools'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'workon|dev)'
@@ -1403,6 +1423,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx pipeline readiness'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --pipeline-gate'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --no-pipeline-gate'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --no-wechat-notify'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '--notify-wechat'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'normalized << "--notify-wechat=false"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --clean'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --rules'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --pipeline'
@@ -2203,6 +2226,60 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_empty publisher.remote_actions
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_publish_success_prints_final_publish_summary
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      def jenkins_json(_uri)
+        { 'building' => false, 'result' => 'SUCCESS', 'duration' => 8_000 }
+      end
+
+      def print_jenkins_progress_log(_build_url, offset)
+        offset
+      end
+
+      def apply_jenkins_auth(_request); end
+
+      def request_jenkins(_uri, _request)
+        response = Net::HTTPOK.new('1.1', '200', 'OK')
+        response.instance_variable_set(:@read, true)
+        response.body = [
+          '[12:00:00]: Successfully uploaded package to App Store Connect',
+          '[INFO] 已同步 Extension CURRENT_PROJECT_VERSION: 1 → 514006',
+          '[SUCCESS] 蒲公英版本: 5.14.6(build [3768](https://www.pgyer.com/iC0d))',
+          'BUILD_DESCRIPTION=Pgyer, 3768'
+        ].join("\n")
+        response
+      end
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1337/', 1337, '蒲公英')
+    end
+
+    assert_includes output, '【打包结果】成功 蒲公英 #1337'
+    assert_includes output, '【发布结果】Jenkins构建号 #1337 | 发布渠道 蒲公英 | 渠道构建号 3768'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_extract_jenkins_channel_build_number_prefers_platform_build
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+
+    lines = [
+      '[INFO] 已同步 Extension CURRENT_PROJECT_VERSION: 1 → 514006',
+      '[INFO] Build号: 514006',
+      '[SUCCESS] 蒲公英版本: 5.14.6(build [3768](https://www.pgyer.com/iC0d))',
+      'BUILD_DESCRIPTION=Pgyer, 3768'
+    ]
+
+    assert_equal '3768', helper.extract_jenkins_channel_build_number(lines)
   end
 
   def test_publish_failure_auto_triggers_configured_pods_fix_job
@@ -3197,6 +3274,23 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
   ensure
     FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_publish_only_parses_wechat_notify_options
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--notify-wechat', 'false'])
+    assert_equal 'false', publisher.instance_variable_get(:@notify_wechat)
+
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--notify-wechat=true'])
+    assert_equal 'true', publisher.instance_variable_get(:@notify_wechat)
+
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--no-wechat-notify'])
+    assert_equal 'false', publisher.instance_variable_get(:@notify_wechat)
+  end
+
+  def test_podx_command_consumes_no_wechat_notify_flag
+    command = Pod::Command::Podx.new(FakeArgv.new(flags: { 'wechat-notify' => false }))
+
+    assert_equal 'false', command.instance_variable_get(:@notify_wechat)
   end
 
   def test_mgit_standalone_status_runs_without_cocoapods_command
@@ -5078,6 +5172,33 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal '1234,', params['VERIFICATION_PASSWORD']
   end
 
+  def test_jenkins_publish_wechat_notify_params
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+    target = { name: '打 Framework', value: nil, kind: :framework }
+
+    helper.instance_variable_set(:@notify_wechat, 'false')
+    params = helper.jenkins_build_params({ branch_param: 'BRANCH', source_param: nil, notify_param: 'WECHAT_NOTIFY' }, 'origin/develop', target)
+    assert_equal 'false', params['WECHAT_NOTIFY']
+
+    params = helper.jenkins_build_params({ branch_param: 'BRANCH', source_param: nil, notify_param: 'NO_WECHAT_NOTIFY' }, 'origin/develop', target)
+    assert_equal 'true', params['NO_WECHAT_NOTIFY']
+
+    params = helper.jenkins_build_params({ branch_param: 'BRANCH', source_param: nil, notify_param: 'no-wechat-notify' }, 'origin/develop', target)
+    assert_equal 'true', params['no-wechat-notify']
+
+    helper.instance_variable_set(:@notify_wechat, 'true')
+    params = helper.jenkins_build_params({ branch_param: 'BRANCH', source_param: nil, notify_param: nil }, 'origin/develop', target)
+    assert_equal 'true', params['NOTIFY_WECHAT_ON_SUCCESS']
+
+    helper.instance_variable_set(:@notify_wechat, 'bad')
+    error = assert_raises(Pod::Informative) do
+      helper.jenkins_build_params({ branch_param: 'BRANCH', source_param: nil, notify_param: 'NOTIFY_WECHAT' }, 'origin/develop', target)
+    end
+    assert_includes error.message, 'notify-wechat'
+  end
+
   def test_jenkins_publish_release_branch_validation
     helper = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
@@ -5217,15 +5338,19 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       { 'name' => 'branch' },
       { 'name' => 'DEPLOY_TARGET' },
       { 'name' => 'VERIFICATION_PASSWORD' },
-      { 'name' => 'PODX_TRIGGER_SOURCE' }
+      { 'name' => 'PODX_TRIGGER_SOURCE' },
+      { 'name' => 'NOTIFY_WECHAT_ON_SUCCESS' }
     ]
     app_profile = helper.jenkins_publish_job_profile
     assert_equal :app, app_profile[:kind]
     assert_equal 'pgyer', app_profile[:default_channel]
     assert_equal 'branch', app_profile[:branch_param]
     assert_equal 'PODX_TRIGGER_SOURCE', app_profile[:source_param]
+    assert_equal 'NOTIFY_WECHAT_ON_SUCCESS', app_profile[:notify_param]
+    helper.instance_variable_set(:@notify_wechat, 'false')
     params = helper.jenkins_build_params(app_profile, 'origin/develop', helper.jenkins_deploy_target('pgyer'))
     assert_equal 'podx publish', params['PODX_TRIGGER_SOURCE']
+    assert_equal 'false', params['NOTIFY_WECHAT_ON_SUCCESS']
     helper.validate_jenkins_publish_target!(app_profile, helper.jenkins_deploy_target('tf'))
 
     error = assert_raises(Pod::Informative) do

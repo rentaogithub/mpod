@@ -205,6 +205,7 @@ value_options = %w[
   --jenkins-job
   --jenkins-url
   --publish-password
+  --notify-wechat
   --fix-job
   --lines
   --limit
@@ -213,7 +214,9 @@ normalized = []
 args = ARGV.dup
 until args.empty?
   arg = args.shift
-  if value_options.include?(arg) && !args.empty? && !args.first.start_with?("-")
+  if arg == "--no-wechat-notify"
+    normalized << "--notify-wechat=false"
+  elsif value_options.include?(arg) && !args.empty? && !args.first.start_with?("-")
     normalized << "#{arg}=#{args.shift}"
   else
     normalized << arg
@@ -278,6 +281,7 @@ pod 扩展命令:
   podx init                        # 一键初始化工程配置、规则、技能、流程、AI 上下文和 hooks
   podx sync                        # 同步团队规则、技能、流程、AI 上下文和 hooks
   podx install                     # 等同 pod install
+  podx install --repo-update       # 等同 pod install --repo-update
   podx update NNBussCom            # 更新命中的本地组件后执行 pod update
   podx clean NNRtc                 # 清理指定组件 pod cache，并删除 Pods/NNRtc
   podx deps                        # 查看依赖组件分支/版本和依赖关系
@@ -319,6 +323,7 @@ pod 扩展命令:
   podx publish app --branch=release/x.x.x  # 指定 release 分支发布 App Store
   podx publish --pipeline-gate     # 发布前执行 pipeline 总门禁
   podx publish --no-pipeline-gate  # 临时跳过发布前 pipeline 总门禁
+  podx publish --no-wechat-notify  # 关闭企业微信机器人通知
   podx publish log [BUILD]         # 查看 Jenkins 日志
   podx publish history [N]         # 查看 Jenkins 最近构建
   podx publish doctor [BUILD]      # 分析 Jenkins 打包失败
