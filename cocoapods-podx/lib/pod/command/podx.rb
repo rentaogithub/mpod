@@ -93,6 +93,8 @@ class Pod::Command::Podx < Pod::Command
             podx publish doctor [BUILD]    分析 Jenkins 打包失败原因；默认 lastBuild
             podx publish fix [BUILD]       半自动修复低风险打包失败；执行前确认
             podx publish --pipeline-gate   发布前执行 pipeline 总门禁
+            podx publish --force-private-pod-update
+                                           强制 Jenkins 更新私有 Pod 依赖
             podx dry-run <command>         预览 publish、update、组件切换等动作
             podx open                      打开当前工程 .xcworkspace
             podx open --overlay            打开 Podfile.overlay
@@ -167,6 +169,8 @@ class Pod::Command::Podx < Pod::Command
       ['--publish-password=PASSWORD', 'Jenkins 发布验证密码；默认交互输入 TestFlight/AppStore 密码，Pgyer 默认空。'],
       ['--notify-wechat=BOOL', '控制 Jenkins 企业微信机器人通知，支持 true/false。'],
       ['--no-wechat-notify', '关闭 Jenkins 企业微信机器人通知，等同 --notify-wechat=false。'],
+      ['--force-private-pod-update=BOOL', '传递 Jenkins FORCE_PRIVATE_POD_UPDATE 参数，支持 true/false；不带值默认 true。'],
+      ['--no-force-private-pod-update', '传递 Jenkins FORCE_PRIVATE_POD_UPDATE=false。'],
       ['--pipeline-gate', 'podx publish 触发 Jenkins 前执行 pipeline 总门禁。'],
       ['--no-pipeline-gate', 'podx publish 临时跳过 pipeline 总门禁。'],
       ['--no-publish-lock', 'podx publish 临时跳过本地并发锁，允许同一工程并行触发。'],
@@ -228,6 +232,9 @@ class Pod::Command::Podx < Pod::Command
     @notify_wechat = argv.option('notify-wechat')
     wechat_notify_flag = argv.flag?('wechat-notify')
     @notify_wechat = wechat_notify_flag.to_s unless wechat_notify_flag.nil?
+    @force_private_pod_update = argv.option('force-private-pod-update')
+    force_private_pod_update_flag = argv.flag?('force-private-pod-update')
+    @force_private_pod_update = force_private_pod_update_flag.to_s unless force_private_pod_update_flag.nil?
     @publish_pipeline_gate = argv.flag?('pipeline-gate', false)
     @skip_publish_pipeline_gate = argv.flag?('no-pipeline-gate', false)
     @skip_publish_lock = argv.flag?('no-publish-lock', false)

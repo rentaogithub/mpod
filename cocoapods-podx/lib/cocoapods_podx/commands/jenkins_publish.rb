@@ -954,6 +954,7 @@ module CocoapodsPodx
         end
         apply_jenkins_podx_source_param!(params, job_profile)
         apply_jenkins_wechat_notify_param!(params, job_profile)
+        apply_jenkins_force_private_pod_update_param!(params)
         params
       end
 
@@ -1037,12 +1038,22 @@ module CocoapodsPodx
         params[notify_param] = jenkins_wechat_disable_param?(notify_param) ? (!notify_enabled).to_s : notify_enabled.to_s
       end
 
+      def apply_jenkins_force_private_pod_update_param!(params)
+        return if @force_private_pod_update.nil?
+
+        params['FORCE_PRIVATE_POD_UPDATE'] = jenkins_bool_option_value(@force_private_pod_update, 'force-private-pod-update').to_s
+      end
+
       def jenkins_wechat_notify_enabled?
-        normalized = @notify_wechat.to_s.strip.downcase
+        jenkins_bool_option_value(@notify_wechat, 'notify-wechat')
+      end
+
+      def jenkins_bool_option_value(value, name)
+        normalized = value.to_s.strip.downcase
         return true if %w[true 1 yes y on enable enabled].include?(normalized)
         return false if %w[false 0 no n off disable disabled].include?(normalized)
 
-        raise Pod::Informative, "notify-wechat 只能是 true/false，当前为：#{@notify_wechat}"
+        raise Pod::Informative, "#{name} 只能是 true/false，当前为：#{value}"
       end
 
       def jenkins_wechat_disable_param?(param)

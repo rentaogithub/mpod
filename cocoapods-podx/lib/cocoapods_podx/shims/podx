@@ -206,6 +206,7 @@ value_options = %w[
   --jenkins-url
   --publish-password
   --notify-wechat
+  --force-private-pod-update
   --fix-job
   --lines
   --limit
@@ -216,6 +217,10 @@ until args.empty?
   arg = args.shift
   if arg == "--no-wechat-notify"
     normalized << "--notify-wechat=false"
+  elsif arg == "--no-force-private-pod-update"
+    normalized << "--force-private-pod-update=false"
+  elsif arg == "--force-private-pod-update" && (args.empty? || args.first.start_with?("-"))
+    normalized << "--force-private-pod-update=true"
   elsif value_options.include?(arg) && !args.empty? && !args.first.start_with?("-")
     normalized << "#{arg}=#{args.shift}"
   else
@@ -324,6 +329,7 @@ pod 扩展命令:
   podx publish --pipeline-gate     # 发布前执行 pipeline 总门禁
   podx publish --no-pipeline-gate  # 临时跳过发布前 pipeline 总门禁
   podx publish --no-wechat-notify  # 关闭企业微信机器人通知
+  podx publish --force-private-pod-update  # 强制 Jenkins 更新私有 Pod 依赖
   podx publish log [BUILD]         # 查看 Jenkins 日志
   podx publish history [N]         # 查看 Jenkins 最近构建
   podx publish doctor [BUILD]      # 分析 Jenkins 打包失败

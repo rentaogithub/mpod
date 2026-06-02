@@ -1424,8 +1424,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --pipeline-gate'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --no-pipeline-gate'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --no-wechat-notify'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --force-private-pod-update'
     assert_includes CocoapodsPodx::ShimGenerator.podx, '--notify-wechat'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '--force-private-pod-update'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'normalized << "--notify-wechat=false"'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'normalized << "--force-private-pod-update=true"'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'normalized << "--force-private-pod-update=false"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --clean'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --rules'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --pipeline'
@@ -3287,10 +3291,32 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal 'false', publisher.instance_variable_get(:@notify_wechat)
   end
 
+  def test_publish_only_parses_force_private_pod_update_options
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--force-private-pod-update'])
+    assert_equal 'true', publisher.instance_variable_get(:@force_private_pod_update)
+
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--force-private-pod-update', 'false'])
+    assert_equal 'false', publisher.instance_variable_get(:@force_private_pod_update)
+
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--force-private-pod-update=true'])
+    assert_equal 'true', publisher.instance_variable_get(:@force_private_pod_update)
+
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--no-force-private-pod-update'])
+    assert_equal 'false', publisher.instance_variable_get(:@force_private_pod_update)
+  end
+
   def test_podx_command_consumes_no_wechat_notify_flag
     command = Pod::Command::Podx.new(FakeArgv.new(flags: { 'wechat-notify' => false }))
 
     assert_equal 'false', command.instance_variable_get(:@notify_wechat)
+  end
+
+  def test_podx_command_consumes_force_private_pod_update_flag
+    command = Pod::Command::Podx.new(FakeArgv.new(flags: { 'force-private-pod-update' => true }))
+    assert_equal 'true', command.instance_variable_get(:@force_private_pod_update)
+
+    command = Pod::Command::Podx.new(FakeArgv.new(options: { 'force-private-pod-update' => 'false' }))
+    assert_equal 'false', command.instance_variable_get(:@force_private_pod_update)
   end
 
   def test_mgit_standalone_status_runs_without_cocoapods_command
@@ -5197,6 +5223,28 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       helper.jenkins_build_params({ branch_param: 'BRANCH', source_param: nil, notify_param: 'NOTIFY_WECHAT' }, 'origin/develop', target)
     end
     assert_includes error.message, 'notify-wechat'
+  end
+
+  def test_jenkins_publish_force_private_pod_update_params
+    helper = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+    target = { name: '蒲公英', value: 'Pgyer,', kind: :app }
+    profile = { branch_param: 'branch', source_param: nil, notify_param: nil }
+
+    helper.instance_variable_set(:@force_private_pod_update, 'true')
+    params = helper.jenkins_build_params(profile, 'origin/develop', target)
+    assert_equal 'true', params['FORCE_PRIVATE_POD_UPDATE']
+
+    helper.instance_variable_set(:@force_private_pod_update, 'false')
+    params = helper.jenkins_build_params(profile, 'origin/develop', target)
+    assert_equal 'false', params['FORCE_PRIVATE_POD_UPDATE']
+
+    helper.instance_variable_set(:@force_private_pod_update, 'bad')
+    error = assert_raises(Pod::Informative) do
+      helper.jenkins_build_params(profile, 'origin/develop', target)
+    end
+    assert_includes error.message, 'force-private-pod-update'
   end
 
   def test_jenkins_publish_release_branch_validation

@@ -75,7 +75,9 @@ module CocoapodsPodx
     def parse_arguments(argv)
       pending_option = nil
       seen_publish = false
-      argv.each do |arg|
+      args = argv.dup
+      until args.empty?
+        arg = args.shift
         if pending_option
           assign_option(pending_option, arg)
           pending_option = nil
@@ -118,6 +120,14 @@ module CocoapodsPodx
           @pod_names << arg
         when '--job', '--jenkins-job', '--jenkins-url', '--branch', '--publish-branch', '--publish-password', '--notify-wechat', '--lines', '--limit', '--fix-job'
           pending_option = arg
+        when '--force-private-pod-update'
+          if !args.empty? && !args.first.start_with?('-') && args.first.match?(/\A(?:true|false|1|0|yes|no|y|n|on|off|enable|disable|enabled|disabled)\z/i)
+            @force_private_pod_update = args.shift
+          else
+            @force_private_pod_update = 'true'
+          end
+        when '--no-force-private-pod-update'
+          @force_private_pod_update = 'false'
         when '--pipeline-gate'
           @publish_pipeline_gate = true
         when '--no-pipeline-gate'
@@ -144,6 +154,8 @@ module CocoapodsPodx
           @publish_password = Regexp.last_match(1)
         when /\A--notify-wechat=(.+)\z/
           @notify_wechat = Regexp.last_match(1)
+        when /\A--force-private-pod-update=(.+)\z/
+          @force_private_pod_update = Regexp.last_match(1)
         when /\A--lines=(.+)\z/
           @jenkins_log_lines = Regexp.last_match(1)
         when /\A--limit=(.+)\z/
@@ -257,6 +269,8 @@ module CocoapodsPodx
           --publish-password PASSWORD
           --notify-wechat BOOL
           --no-wechat-notify
+          --force-private-pod-update [BOOL]
+          --no-force-private-pod-update
           --pipeline-gate
           --no-pipeline-gate
           --no-publish-lock
