@@ -1,5 +1,9 @@
 #!/bin/sh
 
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  export COCOAPODS_PODX_COLOR="${COCOAPODS_PODX_COLOR:-1}"
+fi
+
 detect_cocoapods_gem_home() {
   pod_path="$(command -v pod 2>/dev/null)"
   if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then
@@ -247,6 +251,66 @@ extract_pod_install_error_name() {
   sed -n "s/.*Error installing \\([^[:space:]]*\\).*/\\1/p" "$log_file" 2>/dev/null | head -n 1
 }
 
+snapshot_pbxproj_files() {
+  snapshot_dir="$(mktemp -d "${TMPDIR:-/tmp}/podx-pbxproj.XXXXXX")"
+  list_file="$snapshot_dir/files"
+  : >"$list_file"
+
+  find . -maxdepth 2 -path "*.xcodeproj/project.pbxproj" -type f 2>/dev/null | while IFS= read -r file; do
+    key="$(printf "%s" "$file" | sed 's#[^A-Za-z0-9_.-]#_#g')"
+    backup="$snapshot_dir/$key"
+    cp "$file" "$backup"
+    printf "%s\t%s\n" "$file" "$backup" >>"$list_file"
+  done
+
+  echo "$snapshot_dir"
+}
+
+pbxproj_diff_is_noop() {
+  ruby - "$1" "$2" <<'RUBY'
+before_path, after_path = ARGV
+
+def normalize_pbxproj_noop_changes(path)
+  lines = File.read(path).lines
+  result = []
+  index = 0
+
+  while index < lines.length
+    line = lines[index]
+    next_line = lines[index + 1]
+    if line.match?(/^\s*(exceptions|inputPaths|outputPaths) = \(\s*$/) &&
+       next_line &&
+       next_line.match?(/^\s*\);\s*$/)
+      index += 2
+      next
+    end
+
+    result << line
+    index += 1
+  end
+
+  result.join
+end
+
+exit(normalize_pbxproj_noop_changes(before_path) == normalize_pbxproj_noop_changes(after_path) ? 0 : 1)
+RUBY
+}
+
+restore_noop_pbxproj_changes() {
+  snapshot_dir="$1"
+  list_file="$snapshot_dir/files"
+  [ -f "$list_file" ] || return 0
+
+  while IFS="$(printf '\t')" read -r file backup; do
+    [ -f "$file" ] && [ -f "$backup" ] || continue
+    cmp -s "$file" "$backup" && continue
+
+    if pbxproj_diff_is_noop "$backup" "$file"; then
+      cp "$backup" "$file"
+    fi
+  done <"$list_file"
+}
+
 print_pod_install_success_log() {
   log_file="$1"
   if [ "${COCOAPODS_PODX_INSTALL_VERBOSE:-0}" = "1" ]; then
@@ -265,12 +329,15 @@ run_raw_pod_install_capture() {
 
 run_pod_install_with_auto_fix() {
   log_file="$(mktemp "${TMPDIR:-/tmp}/podx-install.XXXXXX")"
+  pbxproj_snapshot_dir="$(snapshot_pbxproj_files)"
   run_raw_pod_install_capture "$log_file" "$@"
   status=$?
   if [ "$status" -eq 0 ]; then
     print_pod_install_success_log "$log_file"
+    restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"
     echo "【podx install】完成"
     rm -f "$log_file"
+    rm -rf "$pbxproj_snapshot_dir"
     return 0
   fi
 
@@ -279,6 +346,7 @@ run_pod_install_with_auto_fix() {
     if args_include_repo_update "$@"; then
       echo "[podx install] 检测到 ${pod_name:-Pod} 校验和不一致；当前已使用 --repo-update，建议执行：podx cache clean ${pod_name:-NAME} 后重试。"
       rm -f "$log_file"
+      rm -rf "$pbxproj_snapshot_dir"
       return "$status"
     fi
 
@@ -288,18 +356,22 @@ run_pod_install_with_auto_fix() {
     retry_status=$?
     if [ "$retry_status" -eq 0 ]; then
       print_pod_install_success_log "$retry_log_file"
+      restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"
       echo "【podx install】完成"
       rm -f "$log_file" "$retry_log_file"
+      rm -rf "$pbxproj_snapshot_dir"
       return 0
     fi
 
     cat "$retry_log_file"
     rm -f "$log_file" "$retry_log_file"
+    rm -rf "$pbxproj_snapshot_dir"
     return "$retry_status"
   fi
 
   cat "$log_file"
   rm -f "$log_file"
+  rm -rf "$pbxproj_snapshot_dir"
   return "$status"
 }
 
@@ -426,7 +498,10 @@ git 命令:
   mgit diff [NAME]               # 组合查看 git diff
   mgit log [NAME]                # 组合查看最近 5 条 git log
   mgit add [NAME]                # 组合执行 git add -A；mgit add . / -A 等同全量 add
-  mgit pull [NAME]               # 组合执行 git pull --ff-only
+  mgit pull [NAME]               # 组合执行 git pull --rebase
+  mgit pull --ff-only [NAME]     # 组合执行 git pull --ff-only
+  mgit rebase --continue         # 继续当前冲突修复后的 rebase
+  mgit rebase --abort            # 放弃当前 rebase
   mgit push [NAME]               # 组合执行 git push
   mgit commit [NAME] -m "msg"    # 组合提交主工程和本地组件仓库
   mgit commit -m "msg" -edit Podfile

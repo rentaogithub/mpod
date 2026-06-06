@@ -1,4 +1,5 @@
 
+require 'pathname'
 require_relative '../rules'
 
 module CocoapodsPodx
@@ -23,7 +24,7 @@ module CocoapodsPodx
           path = repo[:path]
 
           if action == 'pull' && repo[:source].to_s == '远端'
-            rows << [name, repo[:branch] || '-', '无更新', repo[:commit] || '-', path, '远端']
+            rows << [name, repo[:branch] || '-', '-', repo[:commit] || '-', path, '远端']
             skipped_count += 1
             next
           end
@@ -46,11 +47,13 @@ module CocoapodsPodx
           begin
             case action
             when 'status'
+              commit = git_short_head(path)
+              update = git_action_update_status(path, branch)
               if status.empty?
-                rows << [name, branch || 'detached', 'clean', '-', path]
+                rows << [name, branch || 'detached', 'clean', '-', path, commit, update]
                 skipped_count += 1
               else
-                rows << [name, branch || 'detached', 'changed', git_changed_file_summary(status), path]
+                rows << [name, branch || 'detached', 'changed', git_changed_file_summary(status), path, commit, update]
                 done_count += 1
               end
             when 'diff'
@@ -188,20 +191,33 @@ module CocoapodsPodx
                 rows << [name, branch, '跳过', 'dirty', path]
                 skipped_count += 1
               elsif @dry_run
-                detail = align_state == :dry_run_checkout ? "checkout -> #{branch}; pull origin/#{branch}" : "pull origin/#{branch}"
+                pull_detail = git_pull_command_args(branch).join(' ')
+                detail = align_state == :dry_run_checkout ? "checkout -> #{branch}; #{pull_detail}" : pull_detail
                 rows << [name, branch, '预览', detail, path]
                 done_count += 1
               else
                 before_commit = git_short_head(path)
-                run_git!(path, 'pull', '--ff-only', 'origin', branch)
+                run_git!(path, *git_pull_command_args(branch))
                 after_commit = git_short_head(path)
                 if before_commit != after_commit
                   rows << [name, branch, '有更新', git_commit_summary(path, after_commit), path, '本地']
                   done_count += 1
                 else
-                  rows << [name, branch, '无更新', after_commit, path, '本地']
+                  rows << [name, branch, '-', after_commit, path, '本地']
                   skipped_count += 1
                 end
+              end
+            when 'rebase'
+              if !git_rebase_in_progress?(path)
+                rows << [name, branch || 'detached', 'skip', 'no rebase', path]
+                skipped_count += 1
+              elsif @dry_run
+                rows << [name, branch || 'detached', 'dry-run', git_rebase_command_args.join(' '), path]
+                done_count += 1
+              else
+                run_git!(path, *git_rebase_command_args)
+                rows << [name, branch || 'detached', @rebase_abort_mode ? 'rebase-aborted' : 'rebase-continued', git_rebase_command_args.join(' '), path]
+                done_count += 1
               end
             when 'push'
               branch, align_state = align_git_action_branch(name, path, branch, status)
@@ -236,12 +252,12 @@ module CocoapodsPodx
         end
 
         if action == 'pull'
-          git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 来源 分支 更新状态 Commit], rows.map { |row| git_pull_table_row(row) })
+          git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 来源 分支 更新 Commit], rows.map { |row| git_pull_table_row(row) })
         elsif action == 'status'
-          git_action_print_table("#{action} 结果", %w[仓库 分支 变更], rows.map { |row| git_status_table_row(row) })
+          git_action_print_table("#{action} 结果", %w[仓库 分支 Commit 更新 本地变更], rows.map { |row| git_status_table_row(row) })
         elsif action == 'stash'
           git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 分支 变更], rows.map { |row| git_stash_table_row(row) })
-        elsif %w[add checkout merge push].include?(action)
+        elsif %w[add checkout merge rebase push].include?(action)
           git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 分支 状态], rows.map { |row| git_simple_action_table_row(row) })
         else
           git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 分支 状态 详情 路径], rows)
@@ -265,6 +281,7 @@ module CocoapodsPodx
         return 'stash' if @stash_mode
         return 'add' if @add_mode
         return 'pull' if @pull_mode
+        return 'rebase' if @rebase_mode
         return 'push' if @push_mode
 
         'unknown'
@@ -678,8 +695,47 @@ module CocoapodsPodx
       end
 
       def git_ref_exists?(path, ref)
-        _stdout, status = Open3.capture2('git', '-C', path, 'rev-parse', '--verify', '--quiet', ref)
+        _stdout, status = Open3.capture2e('git', '-C', path, 'rev-parse', '--verify', '--quiet', ref)
         status.success?
+      end
+
+      def git_pull_command_args(branch)
+        @pull_ff_only ? ['pull', '--ff-only', 'origin', branch] : ['pull', '--rebase', 'origin', branch]
+      end
+
+      def git_rebase_command_args
+        @rebase_abort_mode ? ['rebase', '--abort'] : ['rebase', '--continue']
+      end
+
+      def git_rebase_in_progress?(path)
+        git_dir = git_dir_for(path)
+        return false if git_dir.to_s.empty?
+
+        File.directory?(File.join(git_dir, 'rebase-merge')) || File.directory?(File.join(git_dir, 'rebase-apply'))
+      end
+
+      def git_dir_for(path)
+        stdout, status = Open3.capture2e('git', '-C', path, 'rev-parse', '--git-dir')
+        return '' unless status.success?
+
+        git_dir = stdout.strip
+        Pathname.new(git_dir).absolute? ? git_dir : File.expand_path(git_dir, path)
+      rescue StandardError
+        ''
+      end
+
+      def git_action_update_status(path, branch)
+        return '-' if branch.to_s.empty? || branch.to_s == 'detached'
+
+        fetch_branch_quietly(path, branch)
+        return '未知' unless git_ref_exists?(path, "refs/remotes/origin/#{branch}")
+
+        stdout, status = Open3.capture2('git', '-C', path, 'rev-list', '--count', "HEAD..refs/remotes/origin/#{branch}")
+        return '未知' unless status.success?
+
+        stdout.to_i.positive? ? '有更新' : '-'
+      rescue
+        '未知'
       end
 
       def git_action_summary(lines, max_width = 48)
@@ -715,9 +771,9 @@ module CocoapodsPodx
       end
 
       def git_status_table_row(row)
-        repo, branch, status, detail = row
+        repo, branch, status, detail, _path, commit, update = row
         change = status == 'clean' ? '-' : detail
-        [repo, branch, change]
+        [repo, branch, commit.to_s.empty? ? '-' : commit, update.to_s.empty? ? '-' : update, change]
       end
 
       def git_stash_table_row(row)
@@ -755,8 +811,12 @@ module CocoapodsPodx
           '已提交'
         when 'pushed'
           '已推送'
+        when 'rebase-continued'
+          '已继续'
+        when 'rebase-aborted'
+          '已放弃'
         when 'up-to-date'
-          '无更新'
+          '-'
         when 'checkout'
           '已切换'
         when 'merged'
@@ -791,7 +851,7 @@ module CocoapodsPodx
         Pod::UI.puts "| #{headers.each_with_index.map { |value, index| git_action_pad_display(value, widths[index]) }.join(' | ')} |"
         Pod::UI.puts separator
         rows.each do |row|
-          Pod::UI.puts "| #{row.each_with_index.map { |value, index| git_action_pad_display(value, widths[index]) }.join(' | ')} |"
+          Pod::UI.puts "| #{row.each_with_index.map { |value, index| git_action_color_cell(git_action_pad_display(value, widths[index]), value) }.join(' | ')} |"
         end
         Pod::UI.puts separator
       end
@@ -809,7 +869,7 @@ module CocoapodsPodx
       end
 
       def git_action_display_width(value)
-        value.to_s.each_char.sum { |char| git_action_display_char_width(char) }
+        git_action_strip_ansi(value).each_char.sum { |char| git_action_display_char_width(char) }
       end
 
       def git_action_display_char_width(char)
@@ -846,18 +906,47 @@ module CocoapodsPodx
         text + (' ' * [width - git_action_display_width(text), 0].max)
       end
 
+      def git_action_color_cell(rendered, raw)
+        return rendered unless git_action_color_enabled?
+
+        case raw.to_s.strip
+        when '本地', '有更新', '跳过'
+          git_action_ansi(rendered, 36)
+        when '成功', '正常', '通过', '已同步', '已暂存', '已提交', '已推送', '已继续', '已放弃', '已切换', '已合并', '已储藏', '已恢复', '已清理', '已更新'
+          git_action_ansi(rendered, 32)
+        when '失败', '缺失', '非Git', 'dirty', 'detached'
+          git_action_ansi(rendered, 31)
+        when '预览', '未知', '列表'
+          git_action_ansi(rendered, 33)
+        else
+          rendered
+        end
+      end
+
+      def git_action_ansi(text, code)
+        "\e[#{code}m#{text}\e[0m"
+      end
+
+      def git_action_color_enabled?
+        ENV['NO_COLOR'].to_s.empty? && ($stdout.tty? || ENV['COCOAPODS_PODX_COLOR'].to_s == '1')
+      end
+
+      def git_action_strip_ansi(value)
+        value.to_s.gsub(/\e\[[0-9;]*m/, '')
+      end
+
       def git_short_head(path)
-        stdout, status = Open3.capture2('git', '-C', path, 'rev-parse', '--short=6', 'HEAD')
+        stdout, status = Open3.capture2e('git', '-C', path, 'rev-parse', '--short=6', 'HEAD')
         status.success? ? stdout.strip : '-'
       end
 
       def git_full_head(path)
-        stdout, status = Open3.capture2('git', '-C', path, 'rev-parse', 'HEAD')
+        stdout, status = Open3.capture2e('git', '-C', path, 'rev-parse', 'HEAD')
         status.success? ? stdout.strip : ''
       end
 
       def git_remote_head(path, branch)
-        stdout, status = Open3.capture2('git', '-C', path, 'rev-parse', "refs/remotes/origin/#{branch}")
+        stdout, status = Open3.capture2e('git', '-C', path, 'rev-parse', "refs/remotes/origin/#{branch}")
         status.success? ? stdout.strip : ''
       end
 

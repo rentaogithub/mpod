@@ -120,7 +120,7 @@ module CocoapodsPodx
         entries.map { |entry| entry[:name] }.uniq.each do |name|
           begin
             updated = update_local_repo(name, dry_run: false, pull: true, expected_branch: target_branch, quiet: true)
-            rows << [name, target_branch, updated ? '已同步' : '无更新']
+            rows << [name, target_branch, updated ? '已同步' : '-']
           rescue => e
             rows << [name, target_branch, "失败：#{e.message}"]
             failures << "#{name}: #{e.message}"

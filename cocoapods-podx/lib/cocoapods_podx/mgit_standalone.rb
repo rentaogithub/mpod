@@ -103,6 +103,9 @@ module CocoapodsPodx
         @add_mode = true
       when 'pull'
         @pull_mode = true
+      when 'rebase'
+        @rebase_mode = true
+        parse_rebase_subcommand!(argv)
       when 'push'
         @push_mode = true
       when 'commit'
@@ -118,6 +121,7 @@ module CocoapodsPodx
       extract_checkout_branch_from_arguments!
       extract_merge_branch_from_arguments!
       validate_stash_subcommand_arguments!
+      validate_rebase_subcommand_arguments!
     end
 
     def parse_stash_subcommand!(argv)
@@ -137,6 +141,21 @@ module CocoapodsPodx
       end
     end
 
+    def parse_rebase_subcommand!(argv)
+      subcommand = argv.first.to_s
+      case subcommand
+      when '--continue'
+        @rebase_continue_mode = true
+        argv.shift
+      when '--abort'
+        @rebase_abort_mode = true
+        argv.shift
+      when 'help', '--help', '-h'
+        @help_mode = true
+        argv.shift
+      end
+    end
+
     def parse_options(argv)
       pending_option = nil
       argv.each do |arg|
@@ -149,6 +168,10 @@ module CocoapodsPodx
         case arg
         when '--dry-run'
           @dry_run = true
+        when '--rebase'
+          @pull_ff_only = false
+        when '--ff-only'
+          @pull_ff_only = true
         when '-A', '--all', '.'
           @pod_names << arg
         when '-b', '--branch'
@@ -236,6 +259,14 @@ module CocoapodsPodx
       raise Pod::Informative, 'mgit stash apply 必须指定一个仓库，例如：mgit stash apply NNBussCom'
     end
 
+    def validate_rebase_subcommand_arguments!
+      return unless @rebase_mode
+      return if @help_mode
+      return if @rebase_continue_mode || @rebase_abort_mode
+
+      raise Pod::Informative, 'mgit rebase 只支持 --continue 或 --abort，例如：mgit rebase --continue'
+    end
+
     def mgit_placeholder_argument?(value)
       text = value.to_s.strip
       return true if text.match?(/\A\[.+\]\z/)
@@ -250,7 +281,7 @@ module CocoapodsPodx
     end
 
     def git_action_mode?
-      @checkout_mode || @merge_mode || @stash_mode || @status_mode || @diff_mode || @log_mode || @add_mode || @pull_mode || @push_mode
+      @checkout_mode || @merge_mode || @stash_mode || @status_mode || @diff_mode || @log_mode || @add_mode || @pull_mode || @rebase_mode || @push_mode
     end
 
     def load_entries
@@ -489,6 +520,9 @@ module CocoapodsPodx
           mgit add .
           mgit add -A
           mgit pull [NAME]
+          mgit pull --ff-only [NAME]
+          mgit rebase --continue
+          mgit rebase --abort
           mgit push [NAME]
           mgit commit [NAME] -m "msg"
           mgit commit -m "msg" -edit Podfile

@@ -2,6 +2,10 @@
 
 # Examples: mgit status, mgit pull, mgit publish release/x.x.x
 
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  export COCOAPODS_PODX_COLOR="${COCOAPODS_PODX_COLOR:-1}"
+fi
+
 detect_cocoapods_gem_home() {
   pod_path="$(command -v pod 2>/dev/null)"
   if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then

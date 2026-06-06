@@ -357,7 +357,6 @@ module CocoapodsPodx
         if File.exist?(overlay_path)
           overlay.instance_eval(File.read(overlay_path), overlay_path)
           validate_overlay_pod_names!(overlay)
-          puts "【podx install】Podfile.overlay: #{overlay_path}"
         end
         @overlay = overlay
       end
@@ -451,7 +450,7 @@ module CocoapodsPodx
       end
 
       def format_install_table_row(values, widths)
-        "| #{values.each_with_index.map { |value, index| pad_install_table_value(truncate_install_table_value(value, widths[index]), widths[index]) }.join(' | ')} |"
+        "| #{values.each_with_index.map { |value, index| color_install_table_value(pad_install_table_value(truncate_install_table_value(value, widths[index]), widths[index]), value) }.join(' | ')} |"
       end
 
       def truncate_install_table_value(value, max_width)
@@ -479,7 +478,7 @@ module CocoapodsPodx
       end
 
       def install_table_display_width(value)
-        value.to_s.each_char.sum { |char| install_table_display_char_width(char) }
+        strip_install_table_ansi(value).each_char.sum { |char| install_table_display_char_width(char) }
       end
 
       def install_table_display_char_width(char)
@@ -509,6 +508,35 @@ module CocoapodsPodx
           (0xFFE0..0xFFE6),
           (0x1F300..0x1FAFF),
         ].any? { |range| range.cover?(code) }
+      end
+
+      def color_install_table_value(rendered, raw)
+        return rendered unless install_table_color_enabled?
+
+        case raw.to_s.strip
+        when '本地', '有更新', '跳过'
+          install_table_ansi(rendered, 36)
+        when '成功', '已更新', '已清理'
+          install_table_ansi(rendered, 32)
+        when '失败', '缺失'
+          install_table_ansi(rendered, 31)
+        when '未知'
+          install_table_ansi(rendered, 33)
+        else
+          rendered
+        end
+      end
+
+      def install_table_ansi(text, code)
+        "\e[#{code}m#{text}\e[0m"
+      end
+
+      def install_table_color_enabled?
+        ENV['NO_COLOR'].to_s.empty? && ($stdout.tty? || ENV['COCOAPODS_PODX_COLOR'].to_s == '1')
+      end
+
+      def strip_install_table_ansi(value)
+        value.to_s.gsub(/\e\[[0-9;]*m/, '')
       end
 
       def raw_pod_name(name)
@@ -596,7 +624,7 @@ module CocoapodsPodx
           @install_table_has_updates = true
           '有更新'
         else
-          '无更新'
+          '-'
         end
       rescue StandardError
         '未知'

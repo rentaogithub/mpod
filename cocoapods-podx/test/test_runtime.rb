@@ -184,6 +184,41 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
   end
 
+  def test_mgit_pull_defaults_to_rebase_and_accepts_ff_only_option
+    Dir.chdir(@project_dir) do
+      default_command = CocoapodsPodx::MgitStandalone.new(['pull', 'NNLibrary'])
+      ff_only_command = CocoapodsPodx::MgitStandalone.new(['pull', '--ff-only', 'NNLibrary'])
+
+      assert default_command.instance_variable_get(:@pull_mode)
+      refute default_command.instance_variable_get(:@pull_ff_only)
+      assert_equal ['NNLibrary'], default_command.instance_variable_get(:@pod_names)
+      assert ff_only_command.instance_variable_get(:@pull_ff_only)
+      assert_equal ['NNLibrary'], ff_only_command.instance_variable_get(:@pod_names)
+    end
+  end
+
+  def test_mgit_rebase_accepts_continue_and_abort
+    Dir.chdir(@project_dir) do
+      continue_command = CocoapodsPodx::MgitStandalone.new(['rebase', '--continue'])
+      abort_command = CocoapodsPodx::MgitStandalone.new(['rebase', '--abort'])
+
+      assert continue_command.instance_variable_get(:@rebase_mode)
+      assert continue_command.instance_variable_get(:@rebase_continue_mode)
+      assert abort_command.instance_variable_get(:@rebase_mode)
+      assert abort_command.instance_variable_get(:@rebase_abort_mode)
+    end
+  end
+
+  def test_mgit_rebase_requires_continue_or_abort
+    Dir.chdir(@project_dir) do
+      error = assert_raises(Pod::Informative) do
+        CocoapodsPodx::MgitStandalone.new(['rebase'])
+      end
+
+      assert_includes error.message, 'mgit rebase 只支持 --continue 或 --abort'
+    end
+  end
+
   def test_mgit_checkout_create_branch_creates_local_branch_when_remote_missing
     command = CocoapodsPodx::MgitStandalone.allocate
     calls = []
@@ -284,7 +319,45 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
       assert_operator table_lines.length, :>=, 4
       assert_equal 1, widths.uniq.length
+      assert_equal 4, CocoapodsPodx::Runtime.send(:install_table_display_width, "\e[32m正常\e[0m")
     end
+  end
+
+  def test_pod_install_runtime_colors_only_local_source_and_actionable_states
+    previous_no_color = ENV['NO_COLOR']
+    original_color_enabled = CocoapodsPodx::Runtime.method(:install_table_color_enabled?)
+    ENV.delete('NO_COLOR')
+    CocoapodsPodx::Runtime.singleton_class.define_method(:install_table_color_enabled?) { true }
+
+    local = CocoapodsPodx::Runtime.send(:color_install_table_value, '本地', '本地')
+    update = CocoapodsPodx::Runtime.send(:color_install_table_value, '有更新', '有更新')
+    remote = CocoapodsPodx::Runtime.send(:color_install_table_value, '远端', '远端')
+    no_update = CocoapodsPodx::Runtime.send(:color_install_table_value, '-', '-')
+
+    assert_includes local, "\e[36m"
+    assert_includes update, "\e[36m"
+    assert_equal '远端', remote
+    assert_equal '-', no_update
+  ensure
+    ENV['NO_COLOR'] = previous_no_color if previous_no_color
+    ENV.delete('NO_COLOR') if previous_no_color.nil?
+    CocoapodsPodx::Runtime.singleton_class.define_method(:install_table_color_enabled?) { original_color_enabled.call } if original_color_enabled
+  end
+
+  def test_pod_install_runtime_color_can_be_enabled_by_shim_env
+    previous_color = ENV['COCOAPODS_PODX_COLOR']
+    previous_no_color = ENV['NO_COLOR']
+    ENV['COCOAPODS_PODX_COLOR'] = '1'
+    ENV.delete('NO_COLOR')
+
+    local = CocoapodsPodx::Runtime.send(:color_install_table_value, '本地', '本地')
+
+    assert_includes local, "\e[36m"
+  ensure
+    ENV['COCOAPODS_PODX_COLOR'] = previous_color if previous_color
+    ENV.delete('COCOAPODS_PODX_COLOR') if previous_color.nil?
+    ENV['NO_COLOR'] = previous_no_color if previous_no_color
+    ENV.delete('NO_COLOR') if previous_no_color.nil?
   end
 
   def test_remote_repo_url_for_overlay_entries
@@ -1470,6 +1543,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_install_with_auto_fix "$@"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'Verification checksum was incorrect'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_raw_pod_install_capture "$retry_log_file" --repo-update "$@"'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'snapshot_pbxproj_files'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'exceptions|inputPaths|outputPaths'
+    refute_includes CocoapodsPodx::ShimGenerator.podx, '已还原 Xcode 工程无效修改'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_INSTALL_VERBOSE'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'print_pod_install_success_log "$log_file"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, "sed -n '/^【podx install】/p;/^[+|]/p'"
@@ -1531,6 +1608,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit diff [NAME]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit log [NAME]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit add [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit pull [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit pull --ff-only [NAME]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit rebase --continue'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit rebase --abort'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'mgit commit [NAME] -m "msg"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --dry-run --hooks'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_gem_home'
@@ -1556,6 +1637,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'pod podx --jenkins-fix'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'overlay --jenkins-fix'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_INTERNAL=1'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_COLOR'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'branch|list)'
     refute_includes CocoapodsPodx::ShimGenerator.podx, '请使用 mgit branch'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'mgit publish'
@@ -1563,6 +1645,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_cocoapods_gem_home'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_podx_lib_path'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'RUBYLIB="$podx_lib'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, 'COCOAPODS_PODX_COLOR'
     refute_includes CocoapodsPodx::ShimGenerator.mgit, 'pod podx'
     refute_includes CocoapodsPodx::ShimGenerator.mgit, 'COCOAPODS_PODX_INTERNAL=1'
   end
@@ -3774,10 +3857,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     output, = capture_io do
       helper.git_action_print_table(
         'pull 结果',
-        %w[仓库 来源 分支 更新状态 Commit],
+        %w[仓库 来源 分支 更新 Commit],
         [
           ['main', '本地', 'feature/5.14.2_broadcast', '有更新', 'bd5ad0 update: 发布cocoapods-podx 0.0.35'],
-          ['NNLibrary', '远端', 'feature/5.14.2_broadcast', '无更新', '258c70']
+          ['NNLibrary', '远端', 'feature/5.14.2_broadcast', '-', '258c70']
         ]
       )
     end
@@ -3795,8 +3878,23 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     table_lines = output.lines.map(&:chomp).select { |line| line.start_with?('|', '+') }
     widths = table_lines.map { |line| helper.git_action_display_width(line) }
     assert_equal 1, widths.uniq.length
+    assert_equal 4, helper.git_action_display_width("\e[31m失败\e[0m")
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_git_actions_colors_update_and_skip_like_local_source
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      def git_action_color_enabled?
+        true
+      end
+    end.new
+
+    assert_includes helper.git_action_color_cell('本地', '本地'), "\e[36m"
+    assert_includes helper.git_action_color_cell('有更新', '有更新'), "\e[36m"
+    assert_includes helper.git_action_color_cell('跳过', '跳过'), "\e[36m"
   end
 
   def test_git_actions_pull_switches_clean_components_to_main_branch_before_pull
@@ -3854,7 +3952,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
       def run_git!(path, *args)
         @commands << [path, args]
-        @heads[path] = 'bbbbbb' if args == ['pull', '--ff-only', 'origin', @branches[path]]
+        @heads[path] = 'bbbbbb' if args == ['pull', '--rebase', 'origin', @branches[path]]
         ''
       end
 
@@ -3882,7 +3980,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes output, 'bbbbbb update'
     assert_includes helper.commands, [component_path, ['fetch', 'origin']]
     assert_includes helper.commands, [component_path, ['checkout_branch!', 'feature/5.14.2_broadcast']]
-    assert_includes helper.commands, [component_path, ['pull', '--ff-only', 'origin', 'feature/5.14.2_broadcast']]
+    assert_includes helper.commands, [component_path, ['pull', '--rebase', 'origin', 'feature/5.14.2_broadcast']]
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir
@@ -3945,9 +4043,204 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       helper.git_action_repos([])
     end
 
-    assert_includes output, '| main | 本地 | develop | 无更新'
+    assert_includes output, '| main | 本地 | develop | -'
     assert_includes output, '| c4e14d |'
+    assert_includes helper.commands, [project_dir, ['pull', '--rebase', 'origin', 'develop']]
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_git_actions_pull_ff_only_uses_git_pull_ff_only
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
+    FileUtils.mkdir_p(project_dir)
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :commands
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+        @pull_mode = true
+        @pull_ff_only = true
+        @pod_names = []
+        @dry_run = false
+        @commands = []
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def commit_targets(_entries)
+        [{ name: 'main', path: @project_directory }]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(_path)
+        'develop'
+      end
+
+      def git_status_lines(_path)
+        []
+      end
+
+      def git_dirty?(_path)
+        false
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        ''
+      end
+
+      def git_short_head(_path)
+        'c4e14d'
+      end
+    end.new(project_dir)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    capture_io do
+      helper.git_action_repos([])
+    end
+
     assert_includes helper.commands, [project_dir, ['pull', '--ff-only', 'origin', 'develop']]
+    refute_includes helper.commands, [project_dir, ['pull', '--rebase', 'origin', 'develop']]
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_git_actions_rebase_continue_only_runs_for_rebasing_repos
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
+    component_path = File.join(project_dir, 'Development Pods', 'NNLibrary')
+    FileUtils.mkdir_p(project_dir)
+    FileUtils.mkdir_p(component_path)
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :commands
+
+      def initialize(project_directory, component_path)
+        @project_directory = project_directory
+        @component_path = component_path
+        @rebase_mode = true
+        @rebase_continue_mode = true
+        @pod_names = []
+        @dry_run = false
+        @commands = []
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def commit_targets(_entries)
+        [
+          { name: 'main', path: @project_directory },
+          { name: 'NNLibrary', path: @component_path }
+        ]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(_path)
+        'develop'
+      end
+
+      def git_status_lines(_path)
+        []
+      end
+
+      def git_rebase_in_progress?(path)
+        path == @component_path
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        ''
+      end
+    end.new(project_dir, component_path)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.git_action_repos([])
+    end
+
+    assert_includes helper.commands, [component_path, ['rebase', '--continue']]
+    refute_includes helper.commands, [project_dir, ['rebase', '--continue']]
+    assert_match(/\| main\s+\| develop \| 跳过\s+\|/, output)
+    assert_match(/\| NNLibrary \| develop \| 已继续 \|/, output)
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_git_actions_rebase_abort_runs_git_rebase_abort
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
+    FileUtils.mkdir_p(project_dir)
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :commands
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+        @rebase_mode = true
+        @rebase_abort_mode = true
+        @pod_names = []
+        @dry_run = false
+        @commands = []
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def commit_targets(_entries)
+        [{ name: 'main', path: @project_directory }]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(_path)
+        'develop'
+      end
+
+      def git_status_lines(_path)
+        []
+      end
+
+      def git_rebase_in_progress?(_path)
+        true
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        ''
+      end
+    end.new(project_dir)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.git_action_repos([])
+    end
+
+    assert_includes helper.commands, [project_dir, ['rebase', '--abort']]
+    assert_match(/\| main \| develop \| 已放弃 \|/, output)
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir
@@ -4030,9 +4323,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       helper.git_action_repos([{ name: 'NNBussCom' }])
     end
 
-    assert_match(/\| NNBussCom\s+\| 本地 \| develop \| 无更新\s+\| f0fdc2 \|/, output)
-    assert_match(/\| NNLibrary\s+\| 远端 \| develop \| 无更新\s+\| 515fbf \|/, output)
-    assert_includes helper.commands, [buss_path, ['pull', '--ff-only', 'origin', 'develop']]
+    assert_match(/\| NNBussCom\s+\| 本地 \| develop \| -\s+\| f0fdc2 \|/, output)
+    assert_match(/\| NNLibrary\s+\| 远端 \| develop \| -\s+\| 515fbf \|/, output)
+    assert_includes helper.commands, [buss_path, ['pull', '--rebase', 'origin', 'develop']]
     refute helper.commands.any? { |path, _args| path.to_s.include?('NNLibrary') }
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
@@ -5098,18 +5391,23 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     output, = capture_io do
       helper.git_action_print_table(
         'status 结果',
-        %w[仓库 分支 变更],
+        %w[仓库 分支 Commit 更新 本地变更],
         [
-          ['main', 'feature/5.14.2_broadcast', 'LoginLogic.swift'],
-          ['NNBussCom', 'feature/5.14.2_broadcast', 'NNVoiceRoomViewController.swift'],
-          ['NNApperance', 'feature/5.14.2_broadcast', '-']
+          helper.git_status_table_row(['main', 'feature/5.14.2_broadcast', 'changed', 'LoginLogic.swift', '/tmp/main', 'bd5ad0', '有更新']),
+          helper.git_status_table_row(['NNBussCom', 'feature/5.14.2_broadcast', 'changed', 'NNVoiceRoomViewController.swift', '/tmp/nnbusscom', '258c70', '-']),
+          helper.git_status_table_row(['NNApperance', 'feature/5.14.2_broadcast', 'clean', '-', '/tmp/nnapperance', '96bc4c', '-'])
         ]
       )
     end
 
+    assert_includes output, '| Commit'
+    assert_includes output, '| 更新'
+    assert_includes output, '| 本地变更'
     assert_includes output, 'LoginLogic.swift'
     refute_includes output, 'NNIM/Src/Main/Auth'
     assert_includes output, 'NNVoiceRoomViewController.swift'
+    assert_includes output, 'bd5ad0'
+    assert_includes output, '有更新'
 
     table_lines = output.lines.map(&:chomp).select { |line| line.start_with?('|', '+') }
     widths = table_lines.map { |line| helper.git_action_display_width(line) }
@@ -5232,8 +5530,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       helper.git_action_repos([])
     end
 
-    assert_includes output, '| main          | feature/5.14.2_broadcast | 无更新 |'
-    assert_includes output, '| NNBasciCommon | feature/5.14.2_broadcast | 已推送 |'
+    assert_match(/\| main\s+\| feature\/5\.14\.2_broadcast \| -\s+\|/, output)
+    assert_match(/\| NNBasciCommon \| feature\/5\.14\.2_broadcast \| 已推送 \|/, output)
     assert_includes helper.commands, [component_path, ['push', 'origin', 'feature/5.14.2_broadcast']]
     refute_includes helper.commands, [main_path, ['push', 'origin', 'feature/5.14.2_broadcast']]
   ensure

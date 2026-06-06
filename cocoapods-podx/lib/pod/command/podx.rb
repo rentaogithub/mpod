@@ -119,7 +119,10 @@ class Pod::Command::Podx < Pod::Command
             mgit diff [NAME]               组合查看 git diff
             mgit log [NAME]                组合查看最近 5 条 git log
             mgit add [NAME]                组合执行 git add -A；mgit add . / -A 等同全量 add
-            mgit pull [NAME]               组合执行 git pull --ff-only
+            mgit pull [NAME]               组合执行 git pull --rebase
+            mgit pull --ff-only [NAME]     组合执行 git pull --ff-only
+            mgit rebase --continue         继续当前冲突修复后的 rebase
+            mgit rebase --abort            放弃当前 rebase
             mgit push [NAME]               组合执行 git push
             mgit commit [NAME] -m "msg"    组合提交主工程和本地组件仓库
             mgit commit -m "msg" -edit Podfile
@@ -147,7 +150,9 @@ class Pod::Command::Podx < Pod::Command
       ['--log', '组合查看 git log。'],
       ['--limit=N', 'git log 显示条数，默认 5。'],
       ['--add', '组合执行 git add -A；额外的 .、-A、--all 会按全量 add 处理。'],
-      ['--pull', '组合执行 git pull --ff-only。'],
+      ['--pull', '组合执行 git pull --rebase。'],
+      ['--rebase', '搭配 --pull 使用，执行 git pull --rebase；当前为默认行为。'],
+      ['--ff-only', '搭配 --pull 使用，执行 git pull --ff-only。'],
       ['--push', '组合执行 git push。'],
       ['--commit', '组合提交主工程和当前本地组件仓库。'],
       ['--edit=FILE', 'mgit commit 显式允许提交受保护文件，例如 Podfile。'],
@@ -213,6 +218,7 @@ class Pod::Command::Podx < Pod::Command
     @log_limit = argv.option('limit') || '5'
     @add_mode = argv.flag?('add', false)
     @pull_mode = argv.flag?('pull', false)
+    @pull_ff_only = argv.flag?('ff-only', false)
     @push_mode = argv.flag?('push', false)
     @commit_mode = argv.flag?('commit', false)
     @git_publish_mode = argv.flag?('git-publish', false)
@@ -1003,7 +1009,7 @@ class Pod::Command::Podx < Pod::Command
     Pod::UI.puts "| #{headers.each_with_index.map { |value, index| pad_display(value, widths[index]) }.join(' | ')} |"
     Pod::UI.puts separator
     rows.each do |row|
-      Pod::UI.puts "| #{row.each_with_index.map { |value, index| pad_display(value, widths[index]) }.join(' | ')} |"
+      Pod::UI.puts "| #{row.each_with_index.map { |value, index| color_table_value(pad_display(value, widths[index]), value) }.join(' | ')} |"
     end
     Pod::UI.puts separator
   end
@@ -1014,7 +1020,7 @@ class Pod::Command::Podx < Pod::Command
   end
 
   def format_table_row(values, widths)
-    values.each_with_index.map { |value, index| pad_display(value.to_s, widths[index]) }.join('  ')
+    values.each_with_index.map { |value, index| color_table_value(pad_display(value.to_s, widths[index]), value) }.join('  ')
   end
 
   def pad_display(value, width)
@@ -1022,7 +1028,36 @@ class Pod::Command::Podx < Pod::Command
   end
 
   def display_width(value)
-    value.each_char.sum { |char| char.ord > 127 ? 2 : 1 }
+    strip_table_ansi(value).each_char.sum { |char| char.ord > 127 ? 2 : 1 }
+  end
+
+  def color_table_value(rendered, raw)
+    return rendered unless table_color_enabled?
+
+    case raw.to_s.strip
+    when '本地', 'local', '有更新', '跳过'
+      table_ansi(rendered, 36)
+    when '成功', '正常', '完成', '已更新', '已清理', '已继续', '已放弃'
+      table_ansi(rendered, 32)
+    when '失败', '缺失'
+      table_ansi(rendered, 31)
+    when '预览', '未知'
+      table_ansi(rendered, 33)
+    else
+      rendered
+    end
+  end
+
+  def table_ansi(text, code)
+    "\e[#{code}m#{text}\e[0m"
+  end
+
+  def table_color_enabled?
+    ENV['NO_COLOR'].to_s.empty? && ($stdout.tty? || ENV['COCOAPODS_PODX_COLOR'].to_s == '1')
+  end
+
+  def strip_table_ansi(value)
+    value.to_s.gsub(/\e\[[0-9;]*m/, '')
   end
 
   def update_local_repos(entries)
@@ -1111,11 +1146,11 @@ class Pod::Command::Podx < Pod::Command
 
   def podx_update_result_label(plan, updated: nil, dry_run: false)
     action = plan[:action].to_s
-    return '无更新' if action == 'none'
+    return '-' if action == 'none'
     return "预览 #{action}" if dry_run
     return '已更新' if updated
 
-    '无更新'
+    '-'
   end
 
   def overlay_update_target_names(entries)
