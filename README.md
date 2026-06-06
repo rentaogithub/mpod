@@ -16,14 +16,13 @@ Hermes Agent 与 iOS DevOps 的组合方案见 [HERMES_IOS_DEVOPS.md](HERMES_IOS
 
 ```mermaid
 graph LR
-  Entry["入口层<br/>开发者 / CI / AI -> podx / mgit"]
   Install["安装分发<br/>script / gem / shim"]
+  Entry["入口层<br/>开发者 / CI / AI -> podx / mgit"]
 
   DevFlow["开发主流程<br/>检查 / 依赖 / 多仓提交"]
   ReleaseFlow["发布主流程<br/>release / 准入 / 诊断修复"]
 
-  subgraph DomainColumn["能力域"]
-    direction TB
+  subgraph DomainColumn [能力域]
     DependencyDomain["依赖治理<br/>Runtime / overlay / Deps"]
     MultiRepoDomain["多仓协作<br/>GitActions / MgitPublish"]
     RuleDomain["规则治理<br/>Rules / hooks / artifacts"]
@@ -32,8 +31,7 @@ graph LR
     PublishDomain["发布执行<br/>JenkinsPublish / log"]
   end
 
-  subgraph ArtifactColumn["产物 / 外部系统"]
-    direction TB
+  subgraph ArtifactColumn [产物 / 外部系统]
     DependencyArtifacts["依赖配置<br/>Podfile / overlay / Dev Pods"]
     MultiRepoArtifacts["多仓状态<br/>branch / status / diff"]
     RuleArtifacts["规则产物<br/>.gitignore / hooks"]
@@ -74,9 +72,6 @@ graph LR
   class DependencyDomain,MultiRepoDomain,RuleDomain,SkillDomain,PipelineDomain,PublishDomain domain;
   class DependencyArtifacts,MultiRepoArtifacts,RuleArtifacts,SkillArtifacts,PipelineArtifacts,PublishArtifacts artifact;
   class Install dist;
-
-  style DomainColumn fill:#FFF9EA,stroke:#E3BE6A,stroke-width:1px,color:#3C2A08;
-  style ArtifactColumn fill:#F8F3FF,stroke:#BBA4EA,stroke-width:1px,color:#24143D;
 ```
 
 核心分层：
@@ -251,7 +246,7 @@ podx open                        # 打开 .xcworkspace
 podx open --overlay              # 打开或生成 Podfile.overlay
 podx upgrade                     # 升级 cocoapods-podx 到 Nexus 最新版本
 podx upgrade 0.0.51              # 升级 cocoapods-podx 到指定版本
-podx hooks install               # 安装 Git 提交保护 hook，默认拦截 Podfile.rb
+podx hooks install               # 安装版本化 Git 提交保护 hook，默认拦截 Podfile
 podx publish                     # 触发默认发布渠道
 podx publish tf                  # 触发 TestFlight 发布
 podx publish app                 # 触发 App Store 发布
@@ -311,20 +306,20 @@ mgit pull                        # 多仓库拉取
 mgit push                        # 多仓库推送
 mgit add                         # 多仓库 git add -A
 mgit commit -m "message"         # 多仓库提交
-mgit commit -m "message" -edit Podfile.rb # 显式允许提交受保护文件
+mgit commit -m "message" -edit Podfile # 显式允许提交受保护文件
 mgit checkout NNBussCom develop  # 切换指定组件分支
 mgit stash NNBussCom             # stash 指定组件仓库
 mgit publish release/x.y.z       # 创建或更新多仓库发布分支
 ```
 
-`podx hooks install` 会展示当前工程规则，并为命中的仓库安装 `pre-commit` 和 `post-merge`。默认只保护主工程的 `Podfile.rb`；如需调整保护文件，可在 `podx.config.yml` 中配置：
+`podx hooks install` 会展示当前工程规则，并在主工程生成可提交的 `.githooks/pre-commit` 和 `.githooks/post-merge`，同时设置本地 Git 配置 `core.hooksPath=.githooks`。默认只保护主工程的 `Podfile`；如需调整保护文件，可在 `podx.config.yml` 中配置：
 
 ```yaml
 protected_commit_files:
   - Podfile
 ```
 
-受保护文件只能由 `mgit publish <branch>` 或 `mgit commit -m "msg" -edit Podfile.rb` 提交；普通 `git commit`、未声明 `-edit` 的 `mgit commit` 和其他入口都会被 hook 拦截。
+受保护文件只能由 `mgit publish <branch>` 或 `mgit commit -m "msg" -edit Podfile` 提交；普通 `git commit`、未声明 `-edit` 的 `mgit commit` 和其他入口都会被 hook 拦截。`.githooks/` 可加入 Git 记录，规则内容能随仓库同步；新电脑仍需执行一次 `podx init` 或 `podx hooks install`，用于写入本地 `core.hooksPath`。
 
 `git pull`、`mgit pull` 或 `git merge` 后如果受保护文件被带入变更，`post-merge` 会从 `ORIG_HEAD` 自动还原该文件并输出提示。
 

@@ -491,7 +491,7 @@ module CocoapodsPodx
           mgit pull [NAME]
           mgit push [NAME]
           mgit commit [NAME] -m "msg"
-          mgit commit -m "msg" -edit Podfile.rb
+          mgit commit -m "msg" -edit Podfile
           mgit publish BRANCH
           mgit dry-run <command>
       HELP

@@ -199,26 +199,44 @@ module CocoapodsPodx
       def install_protected_file_hooks(path, files)
         install_pre_commit_hook(path, files)
         install_post_merge_hook(path, files)
+        configure_git_hooks_path(path)
       end
 
       def install_pre_commit_hook(path, files)
-        hooks_dir = File.join(path, '.git', 'hooks')
+        hooks_dir = versioned_hooks_dir(path)
         FileUtils.mkdir_p(hooks_dir)
         hook_path = File.join(hooks_dir, 'pre-commit')
-        existing = File.exist?(hook_path) ? File.read(hook_path) : "#!/bin/sh\n"
+        existing = existing_hook_content(path, hook_path, 'pre-commit')
         updated = upsert_podx_hook(existing, files)
         File.write(hook_path, updated)
         FileUtils.chmod('+x', hook_path)
       end
 
       def install_post_merge_hook(path, files)
-        hooks_dir = File.join(path, '.git', 'hooks')
+        hooks_dir = versioned_hooks_dir(path)
         FileUtils.mkdir_p(hooks_dir)
         hook_path = File.join(hooks_dir, 'post-merge')
-        existing = File.exist?(hook_path) ? File.read(hook_path) : "#!/bin/sh\n"
+        existing = existing_hook_content(path, hook_path, 'post-merge')
         updated = upsert_podx_post_merge_hook(existing, files)
         File.write(hook_path, updated)
         FileUtils.chmod('+x', hook_path)
+      end
+
+      def versioned_hooks_dir(path)
+        File.join(path, '.githooks')
+      end
+
+      def existing_hook_content(path, hook_path, hook_name)
+        return File.read(hook_path) if File.exist?(hook_path)
+
+        legacy_hook_path = File.join(path, '.git', 'hooks', hook_name)
+        return File.read(legacy_hook_path) if File.exist?(legacy_hook_path)
+
+        "#!/bin/sh\n"
+      end
+
+      def configure_git_hooks_path(path)
+        run_git!(path, 'config', 'core.hooksPath', '.githooks')
       end
 
       def upsert_podx_hook(content, files)

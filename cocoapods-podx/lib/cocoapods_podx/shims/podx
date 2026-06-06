@@ -231,6 +231,78 @@ exec("pod", "podx", *normalized)
 ' -- "$@"
 }
 
+args_include_repo_update() {
+  for arg in "$@"; do
+    case "$arg" in
+      --repo-update|--repo-update=*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+extract_pod_install_error_name() {
+  log_file="$1"
+  sed -n "s/.*Error installing \\([^[:space:]]*\\).*/\\1/p" "$log_file" 2>/dev/null | head -n 1
+}
+
+print_pod_install_success_log() {
+  log_file="$1"
+  if [ "${COCOAPODS_PODX_INSTALL_VERBOSE:-0}" = "1" ]; then
+    cat "$log_file"
+    return 0
+  fi
+
+  sed -n '/^【podx install】/p;/^[+|]/p' "$log_file"
+}
+
+run_raw_pod_install_capture() {
+  log_file="$1"
+  shift
+  pod install "$@" >"$log_file" 2>&1
+}
+
+run_pod_install_with_auto_fix() {
+  log_file="$(mktemp "${TMPDIR:-/tmp}/podx-install.XXXXXX")"
+  run_raw_pod_install_capture "$log_file" "$@"
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    print_pod_install_success_log "$log_file"
+    echo "【podx install】完成"
+    rm -f "$log_file"
+    return 0
+  fi
+
+  if grep -q "Verification checksum was incorrect" "$log_file" 2>/dev/null; then
+    pod_name="$(extract_pod_install_error_name "$log_file")"
+    if args_include_repo_update "$@"; then
+      echo "[podx install] 检测到 ${pod_name:-Pod} 校验和不一致；当前已使用 --repo-update，建议执行：podx cache clean ${pod_name:-NAME} 后重试。"
+      rm -f "$log_file"
+      return "$status"
+    fi
+
+    echo "[podx install] 检测到 ${pod_name:-Pod} 校验和不一致，自动重试：podx install --repo-update"
+    retry_log_file="$(mktemp "${TMPDIR:-/tmp}/podx-install-retry.XXXXXX")"
+    run_raw_pod_install_capture "$retry_log_file" --repo-update "$@"
+    retry_status=$?
+    if [ "$retry_status" -eq 0 ]; then
+      print_pod_install_success_log "$retry_log_file"
+      echo "【podx install】完成"
+      rm -f "$log_file" "$retry_log_file"
+      return 0
+    fi
+
+    cat "$retry_log_file"
+    rm -f "$log_file" "$retry_log_file"
+    return "$retry_status"
+  fi
+
+  cat "$log_file"
+  rm -f "$log_file"
+  return "$status"
+}
+
 show_modern_cli_tools() {
   cat <<'TOOLS'
 podx tools 检查现代 CLI 工具状态。
@@ -289,6 +361,7 @@ pod 扩展命令:
   podx install --repo-update       # 等同 pod install --repo-update
   podx update NNBussCom            # 更新命中的本地组件后执行 pod update
   podx clean NNRtc                 # 清理指定组件 pod cache，并删除 Pods/NNRtc
+  podx cache clean NNRtc           # 同 podx clean NNRtc
   podx deps                        # 查看依赖组件分支/版本和依赖关系
   podx rules                       # 查看当前工程规则器规则
   podx rules check                 # 检查 .gitignore 是否符合规则器治理
@@ -335,7 +408,7 @@ pod 扩展命令:
   podx publish doctor [BUILD]      # 分析 Jenkins 打包失败
   podx publish fix [BUILD]         # 半自动修复 Jenkins 打包失败
   podx ai init                     # 初始化 AI 辅助配置
-  podx hooks install               # 安装 Git 提交保护 hook
+  podx hooks install               # 安装版本化提交保护 hook
   podx version                     # 查看版本
   podx upgrade [VERSION]           # 升级 cocoapods-podx
   podx list                        # 查看组件状态
@@ -356,7 +429,7 @@ git 命令:
   mgit pull [NAME]               # 组合执行 git pull --ff-only
   mgit push [NAME]               # 组合执行 git push
   mgit commit [NAME] -m "msg"    # 组合提交主工程和本地组件仓库
-  mgit commit -m "msg" -edit Podfile.rb
+  mgit commit -m "msg" -edit Podfile
   mgit publish release/x.x.x     # 从 develop 创建/更新多仓库发布分支并推送
 HELP
 }
@@ -464,7 +537,8 @@ case "$1" in
     ;;
   install)
     shift
-    exec pod install "$@"
+    run_pod_install_with_auto_fix "$@"
+    exit $?
     ;;
   repo)
     shift
@@ -481,6 +555,17 @@ case "$1" in
   clean)
     shift
     run_pod_overlay --clean "$@"
+    ;;
+  cache)
+    shift
+    if [ "$1" = "clean" ]; then
+      shift
+      run_pod_overlay --clean "$@"
+      exit $?
+    fi
+    echo "[!] 未知 cache 命令：podx cache ${1:-}" >&2
+    echo "用法：podx cache clean NAME" >&2
+    exit 1
     ;;
   list)
     shift

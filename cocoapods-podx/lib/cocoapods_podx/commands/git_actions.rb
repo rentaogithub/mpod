@@ -22,6 +22,12 @@ module CocoapodsPodx
           name = repo[:name]
           path = repo[:path]
 
+          if action == 'pull' && repo[:source].to_s == '远端'
+            rows << [name, repo[:branch] || '-', '无更新', repo[:commit] || '-', path, '远端']
+            skipped_count += 1
+            next
+          end
+
           unless File.directory?(path)
             rows << [name, '-', 'missing', '-', path]
             skipped_count += 1
@@ -190,10 +196,10 @@ module CocoapodsPodx
                 run_git!(path, 'pull', '--ff-only', 'origin', branch)
                 after_commit = git_short_head(path)
                 if before_commit != after_commit
-                  rows << [name, branch, '有更新', git_commit_summary(path, after_commit), path]
+                  rows << [name, branch, '有更新', git_commit_summary(path, after_commit), path, '本地']
                   done_count += 1
                 else
-                  rows << [name, branch, '无更新', '-', path]
+                  rows << [name, branch, '无更新', after_commit, path, '本地']
                   skipped_count += 1
                 end
               end
@@ -230,7 +236,7 @@ module CocoapodsPodx
         end
 
         if action == 'pull'
-          git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 分支 更新状态 Commit], rows.map { |row| row.first(4) })
+          git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 来源 分支 更新状态 Commit], rows.map { |row| git_pull_table_row(row) })
         elsif action == 'status'
           git_action_print_table("#{action} 结果", %w[仓库 分支 变更], rows.map { |row| git_status_table_row(row) })
         elsif action == 'stash'
@@ -463,6 +469,7 @@ module CocoapodsPodx
 
       def commit_targets(entries)
         return merge_commit_targets(entries) if @merge_mode && @pod_names.empty? && !@merge_branch.to_s.strip.empty?
+        return pull_commit_targets(entries) if @pull_mode
 
         if @pod_names.empty?
           [{ name: 'main', path: project_directory }] + entries.map do |entry|
@@ -473,6 +480,44 @@ module CocoapodsPodx
             name == 'main' ? { name: 'main', path: project_directory } : { name: name, path: local_repo_path_for(name) }
           end
         end
+      end
+
+      def pull_commit_targets(entries)
+        names = if @pod_names.empty?
+          if respond_to?(:supported_overlay_names, true)
+            Array(supported_overlay_names)
+          else
+            entries.map { |entry| entry[:name] }
+          end
+        else
+          @pod_names
+        end
+        local_names = entries.map { |entry| entry[:name].to_s }.uniq
+        targets = [{ name: 'main', path: project_directory, source: '本地' }]
+        names.map(&:to_s).reject(&:empty?).uniq.each do |name|
+          if local_names.include?(name)
+            targets << { name: name, path: local_repo_path_for(name), source: '本地' }
+          else
+            branch = pull_remote_branch_for(name)
+            targets << { name: name, path: nil, source: '远端', branch: branch, commit: pull_remote_commit_for(name, branch) }
+          end
+        end
+        targets
+      end
+
+      def pull_remote_branch_for(name)
+        branch = declared_branch_for(name) if respond_to?(:declared_branch_for, true)
+        branch = main_git_action_branch if branch.to_s.empty?
+        branch.to_s.empty? ? '-' : branch
+      end
+
+      def pull_remote_commit_for(name, branch)
+        return '-' if branch.to_s.empty? || branch.to_s == '-'
+
+        url = CocoapodsPodx::Runtime.remote_repo_url_for(name)
+        CocoapodsPodx::Runtime.send(:remote_branch_commit_hash, url, branch)
+      rescue
+        '-'
       end
 
       def merge_commit_targets(entries)
@@ -686,6 +731,11 @@ module CocoapodsPodx
                    git_action_status_label(status)
                  end
         [repo, branch, change]
+      end
+
+      def git_pull_table_row(row)
+        repo, branch, status, detail, _path, source = row
+        [repo, source.to_s.empty? ? '本地' : source, branch, status, detail]
       end
 
       def git_simple_action_table_row(row)

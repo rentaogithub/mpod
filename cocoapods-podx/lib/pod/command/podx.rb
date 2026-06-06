@@ -102,7 +102,7 @@ class Pod::Command::Podx < Pod::Command
             podx ai update                 更新 CodeGraph，并检查 Code Review Graph 改动影响
             podx ai doctor                 检查 AI 辅助工具状态
             podx ai mcp                    输出 Hermes MCP 注册说明
-            podx hooks install             为主工程和本地组件安装提交保护 hook
+            podx hooks install             安装版本化提交保护 hook
             podx version                   查看当前插件版本
 
       git 命令:
@@ -122,7 +122,7 @@ class Pod::Command::Podx < Pod::Command
             mgit pull [NAME]               组合执行 git pull --ff-only
             mgit push [NAME]               组合执行 git push
             mgit commit [NAME] -m "msg"    组合提交主工程和本地组件仓库
-            mgit commit -m "msg" -edit Podfile.rb
+            mgit commit -m "msg" -edit Podfile
             mgit publish release/x.x.x     从 develop 创建/更新多仓库发布分支并推送
   DESC
   self.arguments = [
@@ -150,7 +150,7 @@ class Pod::Command::Podx < Pod::Command
       ['--pull', '组合执行 git pull --ff-only。'],
       ['--push', '组合执行 git push。'],
       ['--commit', '组合提交主工程和当前本地组件仓库。'],
-      ['--edit=FILE', 'mgit commit 显式允许提交受保护文件，例如 Podfile.rb。'],
+      ['--edit=FILE', 'mgit commit 显式允许提交受保护文件，例如 Podfile。'],
       ['--git-publish', '按多仓库发布流程创建/更新目标分支；供 mgit publish 使用。'],
       ['--base-branch=BRANCH', 'mgit publish 使用的基准分支，默认 develop。'],
       ['--push-mode=MODE', 'mgit publish 推送模式：normal、skip、set-upstream，默认 normal。'],
@@ -500,7 +500,7 @@ class Pod::Command::Podx < Pod::Command
 
     @pod_names = ['install']
     run_hooks_command(load_entries)
-    rows << ['Git hooks', '完成', 'pre-commit / post-merge']
+    rows << ['Git hooks', '完成', '.githooks/pre-commit / post-merge']
 
     git_action_print_table("podx #{action} 汇总", %w[项目 状态 说明], rows)
     Pod::UI.puts "podx #{action} [done]"

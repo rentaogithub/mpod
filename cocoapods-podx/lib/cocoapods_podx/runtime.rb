@@ -1,5 +1,6 @@
 require 'fileutils'
 require 'open3'
+require 'timeout'
 require 'yaml'
 
 module CocoapodsPodx
@@ -50,6 +51,10 @@ module CocoapodsPodx
         @supported_overlay_names = nil
         @managed_pod_definitions = nil
         @project_config = nil
+        @install_table_started = false
+        @install_table_footer_printed = false
+        @install_table_footer_registered = false
+        @install_table_has_updates = false
       end
 
       def private_source
@@ -167,8 +172,29 @@ module CocoapodsPodx
             remote_name: remote_name,
             custom_git_target: custom_git_target
           ) unless jenkins_local_pod(folder_name)
-          validate_local_pod_branch!(name: name, local_repo_path: local_repo_path, expected_branch: expected_branch)
-          puts "#{name} 从本地拉取: #{local_path}"
+          current_branch = current_git_branch(local_repo_path)
+          display_branch = current_branch || '-'
+          local_commit = local_branch_commit_hash(local_repo_path, display_branch)
+          branch_error = local_pod_branch_error(name: name, local_repo_path: local_repo_path, expected_branch: expected_branch)
+          if branch_error
+            print_install_dependency_row(
+              name: name,
+              source: '本地',
+              branch: display_branch,
+              commit: local_commit,
+              update: local_repo_update_status(local_repo_path, display_branch),
+              status: '失败'
+            )
+            raise branch_error
+          end
+
+          print_install_dependency_row(
+            name: name,
+            source: '本地',
+            branch: display_branch,
+            commit: local_commit,
+            update: local_repo_update_status(local_repo_path, display_branch)
+          )
           return { :path => local_path, :inhibit_warnings => inhibit_warnings }
         end
 
@@ -177,7 +203,13 @@ module CocoapodsPodx
         end
 
         url = remote_git_url(group_name: group_name, raw_name: remote_name, custom_git_target: custom_git_target)
-        puts "#{name} 从远端url: #{url}，分支: #{branch}, configuration:#{configurations}"
+        print_install_dependency_row(
+          name: name,
+          source: '远端',
+          branch: branch,
+          commit: remote_branch_commit_hash(url, branch),
+          update: '-'
+        )
         {
           :git => url,
           :branch => branch,
@@ -325,7 +357,7 @@ module CocoapodsPodx
         if File.exist?(overlay_path)
           overlay.instance_eval(File.read(overlay_path), overlay_path)
           validate_overlay_pod_names!(overlay)
-          puts "加载 Podfile.overlay: #{overlay_path}"
+          puts "【podx install】Podfile.overlay: #{overlay_path}"
         end
         @overlay = overlay
       end
@@ -365,6 +397,118 @@ module CocoapodsPodx
         return tag if !tag.nil? && (tag.include?('develop') || tag.include?('feature/') || tag.include?('release/'))
 
         branch
+      end
+
+      def print_install_dependency_row(name:, source:, branch:, commit:, update: '-', status: '正常')
+        start_install_dependency_table
+        widths = install_dependency_table_widths
+        puts format_install_table_row([name, source, branch, commit, update, status], widths)
+      end
+
+      def start_install_dependency_table
+        return if @install_table_started
+
+        @install_table_started = true
+        widths = install_dependency_table_widths
+        separator = install_table_separator(widths)
+        puts '【podx install】依赖来源'
+        puts separator
+        puts format_install_table_row(%w[组件 来源 分支 Commit 更新 状态], widths)
+        puts separator
+        print_install_main_repo_row(widths)
+        register_install_dependency_table_footer
+      end
+
+      def install_dependency_table_widths
+        [18, 4, 24, 6, 6, 4]
+      end
+
+      def print_install_main_repo_row(widths)
+        branch = current_git_branch(project_directory) || '-'
+        commit = local_branch_commit_hash(project_directory, branch)
+        update = local_repo_update_status(project_directory, branch)
+        puts format_install_table_row(['主仓库', '本地', branch, commit, update, '正常'], widths)
+      end
+
+      def register_install_dependency_table_footer
+        return if @install_table_footer_registered
+
+        @install_table_footer_registered = true
+        at_exit { print_install_dependency_table_footer }
+      end
+
+      def print_install_dependency_table_footer
+        return unless @install_table_started
+        return if @install_table_footer_printed
+
+        @install_table_footer_printed = true
+        puts install_table_separator(install_dependency_table_widths)
+        puts '【podx install】提示 使用mgit pull命令更新代码' if @install_table_has_updates
+      end
+
+      def install_table_separator(widths)
+        "+#{widths.map { |width| '-' * (width + 2) }.join('+')}+"
+      end
+
+      def format_install_table_row(values, widths)
+        "| #{values.each_with_index.map { |value, index| pad_install_table_value(truncate_install_table_value(value, widths[index]), widths[index]) }.join(' | ')} |"
+      end
+
+      def truncate_install_table_value(value, max_width)
+        text = value.to_s
+        suffix = '...'
+        return text if install_table_display_width(text) <= max_width
+        return suffix[0, max_width] if max_width <= install_table_display_width(suffix)
+
+        target_width = max_width - install_table_display_width(suffix)
+        result = +''
+        width = 0
+        text.each_char do |char|
+          char_width = install_table_display_width(char)
+          break if width + char_width > target_width
+
+          result << char
+          width += char_width
+        end
+        "#{result}#{suffix}"
+      end
+
+      def pad_install_table_value(value, width)
+        text = value.to_s
+        text + (' ' * [width - install_table_display_width(text), 0].max)
+      end
+
+      def install_table_display_width(value)
+        value.to_s.each_char.sum { |char| install_table_display_char_width(char) }
+      end
+
+      def install_table_display_char_width(char)
+        code = char.ord
+        return 0 if code.zero?
+        return 0 if (0x0300..0x036F).cover?(code)
+        return 0 if (0x1AB0..0x1AFF).cover?(code)
+        return 0 if (0x1DC0..0x1DFF).cover?(code)
+        return 0 if (0x20D0..0x20FF).cover?(code)
+        return 0 if (0xFE00..0xFE0F).cover?(code)
+        return 0 if (0xFE20..0xFE2F).cover?(code)
+        return 2 if install_table_wide_display_char?(code)
+
+        1
+      end
+
+      def install_table_wide_display_char?(code)
+        [
+          (0x1100..0x115F),
+          (0x2329..0x232A),
+          (0x2E80..0xA4CF),
+          (0xAC00..0xD7A3),
+          (0xF900..0xFAFF),
+          (0xFE10..0xFE19),
+          (0xFE30..0xFE6F),
+          (0xFF00..0xFF60),
+          (0xFFE0..0xFFE6),
+          (0x1F300..0x1FAFF),
+        ].any? { |range| range.cover?(code) }
       end
 
       def raw_pod_name(name)
@@ -408,6 +552,63 @@ module CocoapodsPodx
         end
       end
 
+      def local_branch_commit_hash(repo_path, branch)
+        stdout, status = Open3.capture2e('git', '-C', repo_path, 'rev-parse', '--short=6', branch.to_s)
+        return stdout.strip if status.success? && !stdout.strip.empty?
+
+        '-'
+      rescue StandardError
+        '-'
+      end
+
+      def remote_branch_commit_hash(url, branch)
+        return '-' if url.to_s.empty? || branch.to_s.empty?
+
+        timeout = (ENV['COCOAPODS_PODX_INSTALL_COMMIT_TIMEOUT'] || '3').to_f
+        stdout, status = Timeout.timeout(timeout) do
+          Open3.capture2e('git', 'ls-remote', url, "refs/heads/#{branch}")
+        end
+        return '-' unless status.success?
+
+        hash = stdout.to_s.split(/\s+/).first.to_s
+        hash.empty? ? '-' : hash[0, 6]
+      rescue StandardError
+        '-'
+      end
+
+      def local_repo_update_status(repo_path, branch)
+        return '-' unless File.directory?(repo_path)
+        return '-' if branch.to_s.empty? || branch.to_s == '-'
+        return '-' unless local_repo_git_work_tree?(repo_path)
+
+        timeout = (ENV['COCOAPODS_PODX_INSTALL_COMMIT_TIMEOUT'] || '3').to_f
+        _fetch_output, fetch_status = Timeout.timeout(timeout) do
+          Open3.capture2e('git', '-C', repo_path, 'fetch', 'origin', branch.to_s)
+        end
+        return '未知' unless fetch_status.success?
+
+        stdout, status = Timeout.timeout(timeout) do
+          Open3.capture2e('git', '-C', repo_path, 'rev-list', '--count', "HEAD..refs/remotes/origin/#{branch}")
+        end
+        return '未知' unless status.success?
+
+        if stdout.to_i.positive?
+          @install_table_has_updates = true
+          '有更新'
+        else
+          '无更新'
+        end
+      rescue StandardError
+        '未知'
+      end
+
+      def local_repo_git_work_tree?(repo_path)
+        _stdout, status = Open3.capture2e('git', '-C', repo_path, 'rev-parse', '--is-inside-work-tree')
+        status.success?
+      rescue StandardError
+        false
+      end
+
       def current_git_branch(repo_path)
         return nil unless File.directory?(repo_path)
 
@@ -439,18 +640,18 @@ module CocoapodsPodx
         MSG
       end
 
-      def validate_local_pod_branch!(name:, local_repo_path:, expected_branch:)
+      def local_pod_branch_error(name:, local_repo_path:, expected_branch:)
         current_branch = current_git_branch(local_repo_path)
-        return if current_branch == expected_branch
+        return nil if current_branch == expected_branch
 
         if current_branch.nil?
-          raise <<~MSG
+          return <<~MSG
             本地组件 #{name} 路径 #{local_repo_path} 未检测到 git 当前分支，期望分支为 #{expected_branch}。
             请先执行 `podx update #{name}` 修复本地仓库后，再执行 pod install。
           MSG
         end
 
-        raise <<~MSG
+        <<~MSG
           本地组件 #{name} 当前分支为 #{current_branch}，与期望分支 #{expected_branch} 不一致。
           请先执行 `podx update #{name}` 对齐分支后，再执行 pod install。
         MSG

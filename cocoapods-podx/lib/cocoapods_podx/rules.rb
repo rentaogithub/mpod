@@ -45,7 +45,7 @@ module CocoapodsPodx
     end
 
     class CommitProtection
-      DEFAULT_PROTECTED_FILES = %w[Podfile.rb].freeze
+      DEFAULT_PROTECTED_FILES = %w[Podfile].freeze
       ALLOW_ENV = 'COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT'.freeze
       ALLOW_CONTEXT_MGIT_PUBLISH = 'mgit_publish'.freeze
       HOOK_MARKER_BEGIN = '# >>> cocoapods-podx protected files hook'.freeze
