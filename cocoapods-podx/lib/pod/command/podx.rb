@@ -119,7 +119,7 @@ class Pod::Command::Podx < Pod::Command
             mgit diff [NAME]               组合查看 git diff
             mgit log [NAME]                组合查看最近 5 条 git log
             mgit add [NAME]                组合执行 git add -A；mgit add . / -A 等同全量 add
-            mgit pull [NAME]               组合执行 git pull --rebase
+            mgit pull [NAME]               组合执行 git pull --rebase --autostash
             mgit pull --ff-only [NAME]     组合执行 git pull --ff-only
             mgit rebase --continue         继续当前冲突修复后的 rebase
             mgit rebase --abort            放弃当前 rebase
@@ -150,8 +150,8 @@ class Pod::Command::Podx < Pod::Command
       ['--log', '组合查看 git log。'],
       ['--limit=N', 'git log 显示条数，默认 5。'],
       ['--add', '组合执行 git add -A；额外的 .、-A、--all 会按全量 add 处理。'],
-      ['--pull', '组合执行 git pull --rebase。'],
-      ['--rebase', '搭配 --pull 使用，执行 git pull --rebase；当前为默认行为。'],
+      ['--pull', '组合执行 git pull --rebase --autostash。'],
+      ['--rebase', '搭配 --pull 使用，执行 git pull --rebase --autostash；当前为默认行为。'],
       ['--ff-only', '搭配 --pull 使用，执行 git pull --ff-only。'],
       ['--push', '组合执行 git push。'],
       ['--commit', '组合提交主工程和当前本地组件仓库。'],

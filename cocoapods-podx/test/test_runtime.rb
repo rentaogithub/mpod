@@ -3952,7 +3952,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
       def run_git!(path, *args)
         @commands << [path, args]
-        @heads[path] = 'bbbbbb' if args == ['pull', '--rebase', 'origin', @branches[path]]
+        @heads[path] = 'bbbbbb' if args == ['pull', '--rebase', '--autostash', 'origin', @branches[path]]
         ''
       end
 
@@ -3980,7 +3980,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes output, 'bbbbbb update'
     assert_includes helper.commands, [component_path, ['fetch', 'origin']]
     assert_includes helper.commands, [component_path, ['checkout_branch!', 'feature/5.14.2_broadcast']]
-    assert_includes helper.commands, [component_path, ['pull', '--rebase', 'origin', 'feature/5.14.2_broadcast']]
+    assert_includes helper.commands, [component_path, ['pull', '--rebase', '--autostash', 'origin', 'feature/5.14.2_broadcast']]
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir
@@ -4045,7 +4045,133 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_includes output, '| main | 本地 | develop | -'
     assert_includes output, '| c4e14d |'
-    assert_includes helper.commands, [project_dir, ['pull', '--rebase', 'origin', 'develop']]
+    assert_includes helper.commands, [project_dir, ['pull', '--rebase', '--autostash', 'origin', 'develop']]
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_git_actions_pull_uses_autostash_when_current_branch_is_dirty
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
+    FileUtils.mkdir_p(project_dir)
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :commands
+
+      def initialize(project_directory)
+        @project_directory = project_directory
+        @pull_mode = true
+        @pod_names = []
+        @dry_run = false
+        @commands = []
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def commit_targets(_entries)
+        [{ name: 'main', path: @project_directory }]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(_path)
+        'develop'
+      end
+
+      def git_status_lines(_path)
+        [' M Podfile']
+      end
+
+      def git_dirty?(_path)
+        true
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        ''
+      end
+    end.new(project_dir)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    capture_io do
+      helper.git_action_repos([])
+    end
+
+    assert_includes helper.commands, [project_dir, ['pull', '--rebase', '--autostash', 'origin', 'develop']]
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_git_actions_pull_skips_dirty_repo_when_branch_needs_checkout
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
+    main_path = File.join(project_dir, 'main')
+    component_path = File.join(project_dir, 'Development Pods', 'NNApperance')
+    FileUtils.mkdir_p(main_path)
+    FileUtils.mkdir_p(component_path)
+
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :commands
+
+      def initialize(project_directory, component_path)
+        @project_directory = project_directory
+        @component_path = component_path
+        @pull_mode = true
+        @pod_names = []
+        @dry_run = false
+        @commands = []
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def commit_targets(_entries)
+        [
+          { name: 'main', path: @project_directory },
+          { name: 'NNApperance', path: @component_path }
+        ]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(path)
+        path == @project_directory ? 'develop' : 'release/5.14.3'
+      end
+
+      def git_status_lines(path)
+        path == @component_path ? [' M Podfile'] : []
+      end
+
+      def git_dirty?(path)
+        path == @component_path
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        ''
+      end
+    end.new(main_path, component_path)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      helper.git_action_repos([])
+    end
+
+    assert_includes output, '分支不一致且有本地变更'
+    refute helper.commands.any? { |path, args| path == component_path && args.first == 'pull' }
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir
@@ -4325,7 +4451,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_match(/\| NNBussCom\s+\| 本地 \| develop \| -\s+\| f0fdc2 \|/, output)
     assert_match(/\| NNLibrary\s+\| 远端 \| develop \| -\s+\| 515fbf \|/, output)
-    assert_includes helper.commands, [buss_path, ['pull', '--rebase', 'origin', 'develop']]
+    assert_includes helper.commands, [buss_path, ['pull', '--rebase', '--autostash', 'origin', 'develop']]
     refute helper.commands.any? { |path, _args| path.to_s.include?('NNLibrary') }
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts

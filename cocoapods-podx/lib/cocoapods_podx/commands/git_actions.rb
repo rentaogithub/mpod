@@ -187,9 +187,6 @@ module CocoapodsPodx
               elsif branch.nil?
                 rows << [name, 'detached', '跳过', 'detached', path]
                 skipped_count += 1
-              elsif git_dirty?(path)
-                rows << [name, branch, '跳过', 'dirty', path]
-                skipped_count += 1
               elsif @dry_run
                 pull_detail = git_pull_command_args(branch).join(' ')
                 detail = align_state == :dry_run_checkout ? "checkout -> #{branch}; #{pull_detail}" : pull_detail
@@ -253,6 +250,9 @@ module CocoapodsPodx
 
         if action == 'pull'
           git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 来源 分支 更新 Commit], rows.map { |row| git_pull_table_row(row) })
+          if rows.any? { |row| row[2].to_s == '跳过' && row[3].to_s == 'dirty' }
+            Pod::UI.puts '【pull 提示】存在分支不一致且有本地变更的仓库已跳过；请先提交或 mgit stash 后再执行 mgit pull。'
+          end
         elsif action == 'status'
           git_action_print_table("#{action} 结果", %w[仓库 分支 Commit 更新 本地变更], rows.map { |row| git_status_table_row(row) })
         elsif action == 'stash'
@@ -700,7 +700,7 @@ module CocoapodsPodx
       end
 
       def git_pull_command_args(branch)
-        @pull_ff_only ? ['pull', '--ff-only', 'origin', branch] : ['pull', '--rebase', 'origin', branch]
+        @pull_ff_only ? ['pull', '--ff-only', 'origin', branch] : ['pull', '--rebase', '--autostash', 'origin', branch]
       end
 
       def git_rebase_command_args

@@ -498,7 +498,7 @@ git 命令:
   mgit diff [NAME]               # 组合查看 git diff
   mgit log [NAME]                # 组合查看最近 5 条 git log
   mgit add [NAME]                # 组合执行 git add -A；mgit add . / -A 等同全量 add
-  mgit pull [NAME]               # 组合执行 git pull --rebase
+  mgit pull [NAME]               # 组合执行 git pull --rebase --autostash
   mgit pull --ff-only [NAME]     # 组合执行 git pull --ff-only
   mgit rebase --continue         # 继续当前冲突修复后的 rebase
   mgit rebase --abort            # 放弃当前 rebase
