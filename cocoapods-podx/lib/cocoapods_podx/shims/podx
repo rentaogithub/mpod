@@ -4,6 +4,103 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   export COCOAPODS_PODX_COLOR="${COCOAPODS_PODX_COLOR:-1}"
 fi
 
+run_with_wait_progress() {
+  progress_label="$1"
+  shift
+
+  if [ ! -t 1 ] || [ -n "${COCOAPODS_PODX_NO_PROGRESS:-}" ]; then
+    "$@"
+    return $?
+  fi
+
+  progress_log="$(mktemp "${TMPDIR:-/tmp}/cocoapods-podx-progress.XXXXXX")"
+  : >"$progress_log"
+  "$@" >"$progress_log" 2>&1 &
+  progress_pid=$!
+  progress_offset=0
+  progress_ticks=0
+  progress_frame=0
+  progress_shown=0
+  progress_first_output_seen=0
+
+  while kill -0 "$progress_pid" 2>/dev/null; do
+    progress_size="$(wc -c <"$progress_log" 2>/dev/null | tr -d ' ')"
+    progress_size="${progress_size:-0}"
+    if [ "$progress_size" -gt "$progress_offset" ]; then
+      progress_first_output_seen=1
+      if [ "$progress_shown" -eq 1 ]; then
+        printf '\r\033[2K'
+        progress_shown=0
+      fi
+      dd if="$progress_log" bs=1 skip="$progress_offset" count="$((progress_size - progress_offset))" 2>/dev/null
+      progress_offset="$progress_size"
+    elif [ "$progress_first_output_seen" -eq 0 ] && [ "$progress_ticks" -ge 5 ]; then
+      case "$progress_frame" in
+        0) progress_dots="." ;;
+        1) progress_dots=".." ;;
+        *) progress_dots="..." ;;
+      esac
+      printf '\r\033[2K%s 执行中%s' "$progress_label" "$progress_dots"
+      progress_shown=1
+      progress_frame=$(((progress_frame + 1) % 3))
+    fi
+    progress_ticks=$((progress_ticks + 1))
+    sleep 0.1
+  done
+
+  wait "$progress_pid"
+  progress_status=$?
+  progress_size="$(wc -c <"$progress_log" 2>/dev/null | tr -d ' ')"
+  progress_size="${progress_size:-0}"
+  if [ "$progress_shown" -eq 1 ]; then
+    printf '\r\033[2K'
+  fi
+  if [ "$progress_size" -gt "$progress_offset" ]; then
+    dd if="$progress_log" bs=1 skip="$progress_offset" count="$((progress_size - progress_offset))" 2>/dev/null
+  fi
+  rm -f "$progress_log"
+  return "$progress_status"
+}
+
+run_capture_with_wait_progress() {
+  progress_label="$1"
+  progress_log="$2"
+  shift 2
+
+  if [ ! -t 1 ] || [ -n "${COCOAPODS_PODX_NO_PROGRESS:-}" ]; then
+    "$@" >"$progress_log" 2>&1
+    return $?
+  fi
+
+  "$@" >"$progress_log" 2>&1 &
+  progress_pid=$!
+  progress_ticks=0
+  progress_frame=0
+  progress_shown=0
+
+  while kill -0 "$progress_pid" 2>/dev/null; do
+    if [ "$progress_ticks" -ge 5 ]; then
+      case "$progress_frame" in
+        0) progress_dots="." ;;
+        1) progress_dots=".." ;;
+        *) progress_dots="..." ;;
+      esac
+      printf '\r\033[2K%s 执行中%s' "$progress_label" "$progress_dots"
+      progress_shown=1
+      progress_frame=$(((progress_frame + 1) % 3))
+    fi
+    progress_ticks=$((progress_ticks + 1))
+    sleep 0.1
+  done
+
+  wait "$progress_pid"
+  progress_status=$?
+  if [ "$progress_shown" -eq 1 ]; then
+    printf '\r\033[2K'
+  fi
+  return "$progress_status"
+}
+
 detect_cocoapods_gem_home() {
   pod_path="$(command -v pod 2>/dev/null)"
   if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then
@@ -27,15 +124,19 @@ detect_podx_lib_path() {
     return 0
   fi
 
+  podx_lib="$(ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null)"
+  if [ -n "$podx_lib" ]; then
+    echo "$podx_lib"
+    return 0
+  fi
+
   if [ -n "$gem_home" ]; then
     GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
-  else
-    ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
   fi
 }
 
 pod_available() {
-  command -v pod >/dev/null 2>&1 && pod --version >/dev/null 2>&1
+  command -v pod >/dev/null 2>&1
 }
 
 latest_podx_version_from_nexus() {
@@ -93,6 +194,7 @@ upgrade_cocoapods_podx() {
   fi
 
   if [ -z "$target_version" ]; then
+    echo "cocoapods-podx [check] 正在查询远端最新版本..."
     target_version="$(latest_podx_version_from_nexus)"
   fi
 
@@ -175,17 +277,25 @@ install_upgrade_shim() {
 }
 
 current_podx_version() {
+  version="$(ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? spec.version : ""' 2>/dev/null)"
+  if [ -n "$version" ]; then
+    echo "$version"
+    return 0
+  fi
+
   gem_home="$(detect_cocoapods_gem_home)"
   if [ -n "$gem_home" ]; then
     GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? spec.version : ""' 2>/dev/null
-  else
-    ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? spec.version : ""' 2>/dev/null
   fi
 }
 
 detect_podx_lib_and_gem_env() {
-  gem_home="$(detect_cocoapods_gem_home)"
+  gem_home=""
   podx_lib="$(detect_podx_lib_path)"
+  if [ -z "$podx_lib" ]; then
+    gem_home="$(detect_cocoapods_gem_home)"
+    podx_lib="$(detect_podx_lib_path)"
+  fi
   if [ -n "$podx_lib" ]; then
     export RUBYLIB="$podx_lib${RUBYLIB:+:$RUBYLIB}"
   fi
@@ -196,12 +306,13 @@ detect_podx_lib_and_gem_env() {
 
 run_publish_only() {
   detect_podx_lib_and_gem_env
-  exec ruby -rcocoapods_podx/publish_only -e 'CocoapodsPodx::PublishOnly.run(ARGV)' -- "$@"
+  run_with_wait_progress "podx" ruby -rcocoapods_podx/publish_only -e 'CocoapodsPodx::PublishOnly.run(ARGV)' -- "$@"
+  exit $?
 }
 
 run_pod_overlay() {
   detect_podx_lib_and_gem_env
-  COCOAPODS_PODX_INTERNAL=1 exec ruby -e '
+  COCOAPODS_PODX_INTERNAL=1 run_with_wait_progress "podx" ruby -e '
 value_options = %w[
   --branch
   --publish-branch
@@ -233,6 +344,7 @@ until args.empty?
 end
 exec("pod", "podx", *normalized)
 ' -- "$@"
+  exit $?
 }
 
 args_include_repo_update() {
@@ -324,7 +436,7 @@ print_pod_install_success_log() {
 run_raw_pod_install_capture() {
   log_file="$1"
   shift
-  pod install "$@" >"$log_file" 2>&1
+  run_capture_with_wait_progress "podx install" "$log_file" pod install "$@"
 }
 
 run_pod_install_with_auto_fix() {

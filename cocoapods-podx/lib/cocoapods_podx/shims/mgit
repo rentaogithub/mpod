@@ -6,6 +6,64 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   export COCOAPODS_PODX_COLOR="${COCOAPODS_PODX_COLOR:-1}"
 fi
 
+run_with_wait_progress() {
+  progress_label="$1"
+  shift
+
+  if [ ! -t 1 ] || [ -n "${COCOAPODS_PODX_NO_PROGRESS:-}" ]; then
+    "$@"
+    return $?
+  fi
+
+  progress_log="$(mktemp "${TMPDIR:-/tmp}/cocoapods-podx-progress.XXXXXX")"
+  : >"$progress_log"
+  "$@" >"$progress_log" 2>&1 &
+  progress_pid=$!
+  progress_offset=0
+  progress_ticks=0
+  progress_frame=0
+  progress_shown=0
+  progress_first_output_seen=0
+
+  while kill -0 "$progress_pid" 2>/dev/null; do
+    progress_size="$(wc -c <"$progress_log" 2>/dev/null | tr -d ' ')"
+    progress_size="${progress_size:-0}"
+    if [ "$progress_size" -gt "$progress_offset" ]; then
+      progress_first_output_seen=1
+      if [ "$progress_shown" -eq 1 ]; then
+        printf '\r\033[2K'
+        progress_shown=0
+      fi
+      dd if="$progress_log" bs=1 skip="$progress_offset" count="$((progress_size - progress_offset))" 2>/dev/null
+      progress_offset="$progress_size"
+    elif [ "$progress_first_output_seen" -eq 0 ] && [ "$progress_ticks" -ge 5 ]; then
+      case "$progress_frame" in
+        0) progress_dots="." ;;
+        1) progress_dots=".." ;;
+        *) progress_dots="..." ;;
+      esac
+      printf '\r\033[2K%s 执行中%s' "$progress_label" "$progress_dots"
+      progress_shown=1
+      progress_frame=$(((progress_frame + 1) % 3))
+    fi
+    progress_ticks=$((progress_ticks + 1))
+    sleep 0.1
+  done
+
+  wait "$progress_pid"
+  progress_status=$?
+  progress_size="$(wc -c <"$progress_log" 2>/dev/null | tr -d ' ')"
+  progress_size="${progress_size:-0}"
+  if [ "$progress_shown" -eq 1 ]; then
+    printf '\r\033[2K'
+  fi
+  if [ "$progress_size" -gt "$progress_offset" ]; then
+    dd if="$progress_log" bs=1 skip="$progress_offset" count="$((progress_size - progress_offset))" 2>/dev/null
+  fi
+  rm -f "$progress_log"
+  return "$progress_status"
+}
+
 detect_cocoapods_gem_home() {
   pod_path="$(command -v pod 2>/dev/null)"
   if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then
@@ -25,15 +83,23 @@ detect_podx_lib_path() {
     return 0
   fi
 
+  podx_lib="$(ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null)"
+  if [ -n "$podx_lib" ]; then
+    echo "$podx_lib"
+    return 0
+  fi
+
   if [ -n "$gem_home" ]; then
     GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
-  else
-    ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
   fi
 }
 
-gem_home="$(detect_cocoapods_gem_home)"
+gem_home=""
 podx_lib="$(detect_podx_lib_path)"
+if [ -z "$podx_lib" ]; then
+  gem_home="$(detect_cocoapods_gem_home)"
+  podx_lib="$(detect_podx_lib_path)"
+fi
 
 if [ -n "$podx_lib" ]; then
   export RUBYLIB="$podx_lib${RUBYLIB:+:$RUBYLIB}"
@@ -43,4 +109,5 @@ if [ -n "$gem_home" ]; then
   export GEM_HOME="$gem_home"
 fi
 
-exec ruby -rcocoapods_podx/mgit_standalone -e 'CocoapodsPodx::MgitStandalone.run(ARGV)' -- "$@"
+run_with_wait_progress "mgit" ruby -rcocoapods_podx/mgit_standalone -e 'CocoapodsPodx::MgitStandalone.run(ARGV)' -- "$@"
+exit $?

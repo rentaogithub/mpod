@@ -2165,9 +2165,24 @@ module CocoapodsPodx
         response = request_jenkins(uri, request)
         return offset unless response.is_a?(Net::HTTPSuccess)
 
-        response['X-Text-Size'].to_i.nonzero? || offset
+        new_offset = response['X-Text-Size'].to_i.nonzero? || offset
+        line = latest_jenkins_progress_line(response.body)
+        unless line.empty? || line == @last_jenkins_progress_log_line
+          @last_jenkins_progress_log_line = line
+          print_jenkins_progress(line)
+        end
+        new_offset
       rescue
         offset
+      end
+
+      def latest_jenkins_progress_line(text)
+        safe_jenkins_text(text)
+          .lines
+          .map { |line| strip_ansi(line).sub(/\A【打包进度】\s*/, '').strip }
+          .reject(&:empty?)
+          .last
+          .to_s
       end
 
       def print_jenkins_progress(message)

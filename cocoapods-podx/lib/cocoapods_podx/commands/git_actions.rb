@@ -35,20 +35,21 @@ module CocoapodsPodx
             next
           end
 
-          unless git_work_tree?(path)
+          snapshot = git_action_repo_snapshot(path)
+          unless snapshot[:work_tree]
             rows << [name, '-', 'not-git', '-', path]
             skipped_count += 1
             next
           end
 
-          branch = git_branch_for(path)
-          status = git_status_lines(path)
+          branch = snapshot[:branch]
+          status = snapshot[:status_lines]
 
           begin
             case action
             when 'status'
               commit = git_short_head(path)
-              update = git_action_update_status(path, branch)
+              update = snapshot[:update]
               if status.empty?
                 rows << [name, branch || 'detached', 'clean', '-', path, commit, update]
                 skipped_count += 1
@@ -229,10 +230,10 @@ module CocoapodsPodx
                 rows << [name, branch, 'dry-run', detail, path]
                 done_count += 1
               else
-                run_git!(path, 'fetch', 'origin', branch)
                 local_commit = git_full_head(path)
-                remote_commit = git_remote_head(path, branch)
-                if !remote_commit.empty? && local_commit == remote_commit
+                ahead_count = snapshot[:ahead_count]
+                ahead_count = git_ahead_count(path, branch) if ahead_count.nil?
+                if ahead_count == 0
                   rows << [name, branch, 'up-to-date', '-', path]
                   skipped_count += 1
                 else
@@ -339,13 +340,13 @@ module CocoapodsPodx
           branch ||= 'detached'
           status = git_status_lines(path) if align_state == :checkout
           if align_state == :dirty_branch
-            rows << [name, branch, 'skip']
+            rows << [name, branch, 'skip', 'dirty']
             skipped_count += 1
             next
           end
 
           if status.empty?
-            rows << [name, branch, 'skip']
+            rows << [name, branch, 'skip', 'clean']
             skipped_count += 1
             next
           end
@@ -516,7 +517,7 @@ module CocoapodsPodx
             targets << { name: name, path: local_repo_path_for(name), source: '本地' }
           else
             branch = pull_remote_branch_for(name)
-            targets << { name: name, path: nil, source: '远端', branch: branch, commit: pull_remote_commit_for(name, branch) }
+            targets << { name: name, path: nil, source: '远端', branch: branch, commit: '-' }
           end
         end
         targets
@@ -727,15 +728,65 @@ module CocoapodsPodx
       def git_action_update_status(path, branch)
         return '-' if branch.to_s.empty? || branch.to_s == 'detached'
 
-        fetch_branch_quietly(path, branch)
-        return '未知' unless git_ref_exists?(path, "refs/remotes/origin/#{branch}")
+        return '-' unless git_ref_exists?(path, "refs/remotes/origin/#{branch}")
 
         stdout, status = Open3.capture2('git', '-C', path, 'rev-list', '--count', "HEAD..refs/remotes/origin/#{branch}")
-        return '未知' unless status.success?
+        return '-' unless status.success?
 
         stdout.to_i.positive? ? '有更新' : '-'
       rescue
-        '未知'
+        '-'
+      end
+
+      def git_action_repo_snapshot(path)
+        stdout, status = Open3.capture2('git', '-C', path, 'status', '--short', '--branch', err: File::NULL)
+        unless status.success?
+          if git_work_tree?(path)
+            branch = git_branch_for(path)
+            status_lines = git_status_lines(path)
+            return {
+              work_tree: true,
+              branch: branch,
+              status_lines: status_lines,
+              update: git_action_update_status(path, branch),
+              ahead_count: nil
+            }
+          end
+
+          return {
+            work_tree: false,
+            branch: nil,
+            status_lines: [],
+            update: '-',
+            ahead_count: nil
+          }
+        end
+
+        lines = stdout.lines.map(&:chomp).reject(&:empty?)
+        branch_line = lines.first.to_s.start_with?('## ') ? lines.shift : ''
+        parsed = git_action_parse_branch_status(branch_line)
+        {
+          work_tree: true,
+          branch: parsed[:branch],
+          status_lines: lines,
+          update: parsed[:behind_count].positive? ? '有更新' : '-',
+          ahead_count: parsed[:ahead_count]
+        }
+      end
+
+      def git_action_parse_branch_status(line)
+        text = line.to_s.sub(/\A##\s*/, '').strip
+        return { branch: nil, ahead_count: nil, behind_count: 0 } if text.empty? || text.start_with?('HEAD ')
+
+        branch = text[/No commits yet on\s+(.+)\z/, 1]
+        branch ||= text.split('...').first.to_s.split(/\s+/).first
+        ahead = text[/ahead\s+(\d+)/, 1]
+        behind = text[/behind\s+(\d+)/, 1]
+        {
+          branch: branch.empty? ? nil : branch,
+          ahead_count: ahead.nil? ? nil : ahead.to_i,
+          behind_count: behind.nil? ? 0 : behind.to_i
+        }
       end
 
       def git_action_summary(lines, max_width = 48)
@@ -795,7 +846,9 @@ module CocoapodsPodx
       end
 
       def git_simple_action_table_row(row)
-        repo, branch, status = row
+        repo, branch, status, detail = row
+        return [repo, branch, '-'] if status.to_s == 'skip' && detail.to_s == 'clean'
+
         [repo, branch, git_action_status_label(status)]
       end
 
@@ -948,6 +1001,18 @@ module CocoapodsPodx
       def git_remote_head(path, branch)
         stdout, status = Open3.capture2e('git', '-C', path, 'rev-parse', "refs/remotes/origin/#{branch}")
         status.success? ? stdout.strip : ''
+      end
+
+      def git_ahead_count(path, branch)
+        remote_ref = "refs/remotes/origin/#{branch}"
+        return nil unless git_ref_exists?(path, remote_ref)
+
+        stdout, status = Open3.capture2('git', '-C', path, 'rev-list', '--count', "#{remote_ref}..HEAD")
+        return nil unless status.success?
+
+        stdout.to_i
+      rescue
+        nil
       end
 
       def git_stash_lines(path)

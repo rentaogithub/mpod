@@ -219,6 +219,48 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
   end
 
+  def test_mgit_local_repo_path_uses_existing_development_pods_without_podfile_parse
+    Dir.mktmpdir('cocoapods-podx-mgit-fast-path') do |project_dir|
+      FileUtils.mkdir_p(File.join(project_dir, '.git'))
+      FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'NNLibrary'))
+
+      singleton = class << CocoapodsPodx::Runtime; self; end
+      original = CocoapodsPodx::Runtime.method(:local_repo_folder_name_for)
+      singleton.define_method(:local_repo_folder_name_for) { |_name| raise 'should not parse Podfile' }
+
+      Dir.chdir(project_dir) do
+        command = CocoapodsPodx::MgitStandalone.new(['status', 'NNLibrary'])
+        assert_equal(
+          File.realpath(File.join(project_dir, 'Development Pods', 'NNLibrary')),
+          command.send(:local_repo_path_for, 'NNLibrary')
+        )
+      end
+    ensure
+      singleton.define_method(:local_repo_folder_name_for, original) if singleton && original
+    end
+  end
+
+  def test_mgit_local_repo_path_falls_back_to_runtime_for_group_repo_folder
+    Dir.mktmpdir('cocoapods-podx-mgit-fallback-path') do |project_dir|
+      FileUtils.mkdir_p(File.join(project_dir, '.git'))
+      FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'nnbusscom'))
+
+      singleton = class << CocoapodsPodx::Runtime; self; end
+      original = CocoapodsPodx::Runtime.method(:local_repo_folder_name_for)
+      singleton.define_method(:local_repo_folder_name_for) { |_name| 'nnbusscom' }
+
+      Dir.chdir(project_dir) do
+        command = CocoapodsPodx::MgitStandalone.new(['status', 'NNLogin'])
+        assert_equal(
+          File.realpath(File.join(project_dir, 'Development Pods', 'nnbusscom')),
+          command.send(:local_repo_path_for, 'NNLogin')
+        )
+      end
+    ensure
+      singleton.define_method(:local_repo_folder_name_for, original) if singleton && original
+    end
+  end
+
   def test_mgit_checkout_create_branch_creates_local_branch_when_remote_missing
     command = CocoapodsPodx::MgitStandalone.allocate
     calls = []
@@ -1618,10 +1660,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_ruby'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_podx_lib_path'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod_available'
-    assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod --version'
+    refute_includes CocoapodsPodx::ShimGenerator.podx, 'pod --version'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'version="$(ruby -e'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'normalized << "#{arg}=#{args.shift}"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'latest_podx_version_from_nexus'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'upgrade_cocoapods_podx'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'cocoapods-podx [check] 正在查询远端最新版本'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'exec_upgrade_from_temp_shim'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_COMMAND_DIR'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_SELF_UPGRADE_DIR'
@@ -1638,12 +1682,18 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'overlay --jenkins-fix'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_INTERNAL=1'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_COLOR'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'progress_first_output_seen'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '[ "$progress_first_output_seen" -eq 0 ]'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'branch|list)'
     refute_includes CocoapodsPodx::ShimGenerator.podx, '请使用 mgit branch'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'mgit publish'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'mgit_standalone'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_cocoapods_gem_home'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_podx_lib_path'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, 'progress_first_output_seen'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, '[ "$progress_first_output_seen" -eq 0 ]'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, 'gem_home=""'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, 'if [ -z "$podx_lib" ]; then'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'RUBYLIB="$podx_lib'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'COCOAPODS_PODX_COLOR'
     refute_includes CocoapodsPodx::ShimGenerator.mgit, 'pod podx'
@@ -2388,6 +2438,64 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     refute_includes output, '【自动修复】检测到'
     assert_empty publisher.remote_actions
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_print_jenkins_progress_log_prints_latest_progressive_line
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      def apply_jenkins_auth(_request); end
+
+      def request_jenkins(_uri, _request)
+        response = Net::HTTPOK.new('1.1', '200', 'OK')
+        response.instance_variable_set(:@read, true)
+        response['X-Text-Size'] = '128'
+        response.body = [
+          'Building in workspace /Users/a1/.jenkins/workspace/nn',
+          '▸ Compiling LoginLogic.swift',
+          'Successfully uploaded package to App Store Connect'
+        ].join("\n")
+        response
+      end
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      offset = publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 0)
+      assert_equal 128, offset
+    end
+
+    assert_includes output, '【打包进度】Successfully uploaded package to App Store Connect'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
+  def test_print_jenkins_progress_log_does_not_repeat_same_line
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      def apply_jenkins_auth(_request); end
+
+      def request_jenkins(_uri, _request)
+        response = Net::HTTPOK.new('1.1', '200', 'OK')
+        response.instance_variable_set(:@read, true)
+        response['X-Text-Size'] = '256'
+        response.body = "▸ Compiling LoginLogic.swift\n"
+        response
+      end
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 0)
+      publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 128)
+    end
+
+    assert_equal 1, output.scan('▸ Compiling LoginLogic.swift').length
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
@@ -3185,7 +3293,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
-  def test_jenkins_progress_log_only_updates_offset_without_printing_console_noise
+  def test_jenkins_progress_log_updates_offset_and_prints_latest_line
     publisher = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
 
@@ -3210,7 +3318,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       assert_equal 321, publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 0)
     end
 
-    assert_equal '', output
+    assert_includes output, '【打包进度】ERROR: Failed to load AuthKey file.'
+    refute_includes output, 'Set Team id to'
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
@@ -4413,10 +4522,6 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         'develop'
       end
 
-      def pull_remote_commit_for(_name, _branch)
-        '515fbf'
-      end
-
       def git_work_tree?(_path)
         true
       end
@@ -4450,7 +4555,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_match(/\| NNBussCom\s+\| 本地 \| develop \| -\s+\| f0fdc2 \|/, output)
-    assert_match(/\| NNLibrary\s+\| 远端 \| develop \| -\s+\| 515fbf \|/, output)
+    assert_match(/\| NNLibrary\s+\| 远端 \| develop \| -\s+\| -\s+\|/, output)
     assert_includes helper.commands, [buss_path, ['pull', '--rebase', '--autostash', 'origin', 'develop']]
     refute helper.commands.any? { |path, _args| path.to_s.include?('NNLibrary') }
   ensure
@@ -5542,6 +5647,34 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
+  def test_git_actions_status_update_does_not_fetch_remote
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      def fetch_branch_quietly(_path, _branch)
+        raise 'status should not fetch'
+      end
+    end.new
+
+    assert_equal '-', helper.git_action_update_status('/tmp/not-a-repo', 'develop')
+  end
+
+  def test_git_actions_parse_branch_status_from_single_status_command
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+    end.new
+
+    parsed = helper.git_action_parse_branch_status('## develop...origin/develop [ahead 2, behind 1]')
+    assert_equal 'develop', parsed[:branch]
+    assert_equal 2, parsed[:ahead_count]
+    assert_equal 1, parsed[:behind_count]
+
+    parsed = helper.git_action_parse_branch_status('## release/5.14.5')
+    assert_equal 'release/5.14.5', parsed[:branch]
+    assert_nil parsed[:ahead_count]
+    assert_equal 0, parsed[:behind_count]
+  end
+
   def test_git_actions_simple_action_table_uses_three_aligned_columns
     helper = Class.new do
       include CocoapodsPodx::Commands::GitActions
@@ -5563,7 +5696,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_includes output, '| 仓库'
     assert_includes output, '已暂存'
-    assert_includes output, '跳过'
+    assert_match(/\| NNBussCom\s+\| feature\/5\.14\.2_broadcast \| -\s+\|/, output)
     assert_includes output, '已推送'
     refute_includes output, '详情'
     refute_includes output, '路径'
@@ -5603,9 +5736,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
           main_path => '1111111111111111111111111111111111111111',
           component_path => '2222222222222222222222222222222222222222'
         }
-        @remote_heads = {
-          main_path => '1111111111111111111111111111111111111111',
-          component_path => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        @ahead_counts = {
+          main_path => 0,
+          component_path => 1
         }
       end
 
@@ -5641,8 +5774,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         @local_heads[path]
       end
 
-      def git_remote_head(path, _branch)
-        @remote_heads[path]
+      def git_ahead_count(path, _branch)
+        @ahead_counts[path]
       end
 
       def git_commit_summary(_path, commit)

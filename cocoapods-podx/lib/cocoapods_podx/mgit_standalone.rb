@@ -329,8 +329,29 @@ module CocoapodsPodx
     end
 
     def local_repo_path_for(name)
+      fast_path = fast_local_repo_path_for(name)
+      return fast_path if fast_path
+
       repo_dir = CocoapodsPodx::Runtime.local_repo_folder_name_for(name)
       File.expand_path(File.join(project_directory, 'Development Pods', repo_dir))
+    end
+
+    def fast_local_repo_path_for(name)
+      root = File.join(project_directory, 'Development Pods')
+      return nil unless File.directory?(root)
+
+      raw_name = name.to_s.include?('/') ? name.to_s.split('/').first : name.to_s
+      candidates = [
+        raw_name,
+        raw_name.downcase,
+        raw_name.gsub(/([a-z\d])([A-Z])/, '\\1_\\2').downcase
+      ].uniq
+      candidates.each do |candidate|
+        path = File.expand_path(File.join(root, candidate))
+        return path if File.directory?(path)
+      end
+
+      nil
     end
 
     def main_app_branch
