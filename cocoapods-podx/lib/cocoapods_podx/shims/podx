@@ -447,6 +447,69 @@ run_raw_pod_install_capture() {
   run_capture_with_wait_progress "podx install" "$log_file" pod install "$@"
 }
 
+overlay_pod_names() {
+  [ -f "Podfile.overlay" ] || return 0
+
+  ruby <<'RUBY' 2>/dev/null
+def pod_names_from(path)
+  return [] unless File.exist?(path)
+
+  File.readlines(path).each_with_object([]) do |line, names|
+    next if line.strip.start_with?("#")
+
+    match = line.match(/^\s*pod\s+["']([^"']+)["']/)
+    names << match[1] if match
+  end
+end
+
+def group_name_from_pod_line(line)
+  line[/[:]?group_name\s*=>\s*["']([^"']+)["']/, 1] ||
+    line[/group_name:\s*["']([^"']+)["']/, 1]
+end
+
+overlay_names = pod_names_from("Podfile.overlay")
+names = overlay_names.dup
+
+if File.exist?("Podfile")
+  File.readlines("Podfile").each do |line|
+    next if line.strip.start_with?("#")
+
+    match = line.match(/^\s*pod\s+["']([^"']+)["'](.*)$/)
+    next unless match
+
+    pod_name = match[1]
+    options_text = match[2].to_s
+    group_name = group_name_from_pod_line(options_text)
+    next unless overlay_names.include?(pod_name) || (group_name && overlay_names.include?(group_name))
+
+    names << pod_name
+    names << pod_name.split("/").first if pod_name.include?("/")
+  end
+end
+
+puts names.uniq
+RUBY
+}
+
+cleanup_overlay_pods_dir() {
+  [ -d "Pods" ] || return 0
+
+  removed=""
+  overlay_pod_names | while IFS= read -r pod_name; do
+    [ -n "$pod_name" ] || continue
+    pod_dir="Pods/$pod_name"
+    [ -d "$pod_dir" ] || continue
+    rm -rf "$pod_dir"
+    printf "%s\n" "$pod_name"
+  done | {
+    while IFS= read -r removed_name; do
+      removed="${removed}${removed_name} "
+    done
+    removed="$(printf "%s" "$removed" | sed 's/[[:space:]]*$//')"
+    [ -z "$removed" ] || echo "【podx install】已清理 Pods 旧本地组件: $removed"
+  }
+}
+
 run_pod_update_for_remote_updates() {
   updates_file="$1"
   shift
@@ -482,6 +545,7 @@ run_pod_install_with_auto_fix() {
   else
     unset COCOAPODS_PODX_REPO_UPDATE
   fi
+  cleanup_overlay_pods_dir
   run_raw_pod_install_capture "$log_file" "$@"
   status=$?
   if [ "$status" -eq 0 ]; then
