@@ -119,6 +119,18 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     singleton.define_method(:remote_branch_commit_hash, original) if original
   end
 
+  def write_podfile_lock_checkout_options(commit: 'abcdef123456')
+    File.write(File.join(@project_dir, 'Podfile.lock'), <<~YAML)
+      PODS:
+        - NNLibrary
+
+      CHECKOUT OPTIONS:
+        NNLibrary:
+          :git: http://git.example.com/nn_ios/nnyytext.git
+          :commit: #{commit}
+    YAML
+  end
+
   def test_internal_pod_definitions_are_managed_and_normal_pod_definitions_are_not
     assert CocoapodsPodx::Runtime.managed_pod?('NNApperance')
     refute CocoapodsPodx::Runtime.managed_pod?('Alamofire')
@@ -310,6 +322,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   end
 
   def test_pod_install_runtime_output_is_structured
+    write_podfile_lock_checkout_options(commit: 'abcdef123456')
+
     with_stubbed_runtime_remote_commit('abcdef') do
       output = capture_io do
         CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
@@ -330,6 +344,41 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       assert_includes output, '| 正常'
       refute_includes output, 'http://git.example.com/nn_ios/nnyytext.git'
     end
+  end
+
+  def test_pod_install_runtime_prints_repo_update_hint_when_remote_lock_commit_is_behind
+    write_podfile_lock_checkout_options(commit: '111111123456')
+
+    output = with_stubbed_runtime_remote_commit('222222') do
+      capture_io do
+        CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+        CocoapodsPodx::Runtime.send(:print_install_dependency_table_footer)
+      end.first
+    end
+
+    assert_match(/\| NNLibrary\s+\| 远端 \| develop\s+\| 111111 \| 有更新 \| 正常 \|/, output)
+    assert_includes output, '【podx install】提示 使用 podx install --repo-update'
+  end
+
+  def test_pod_install_runtime_records_remote_updates_without_hint_during_repo_update
+    write_podfile_lock_checkout_options(commit: '111111123456')
+    updates_file = File.join(@project_dir, 'remote-updates.txt')
+    ENV['COCOAPODS_PODX_REPO_UPDATE'] = '1'
+    ENV['COCOAPODS_PODX_REMOTE_UPDATES_FILE'] = updates_file
+
+    output = with_stubbed_runtime_remote_commit('222222') do
+      capture_io do
+        CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+        CocoapodsPodx::Runtime.send(:print_install_dependency_table_footer)
+      end.first
+    end
+
+    assert_match(/\| NNLibrary\s+\| 远端 \| develop\s+\| 111111 \| 有更新 \| 正常 \|/, output)
+    refute_includes output, '【podx install】提示 使用 podx install --repo-update'
+    assert_equal "NNLibrary\n", File.read(updates_file)
+  ensure
+    ENV.delete('COCOAPODS_PODX_REPO_UPDATE')
+    ENV.delete('COCOAPODS_PODX_REMOTE_UPDATES_FILE')
   end
 
   def test_pod_install_runtime_prints_mgit_pull_hint_when_local_has_updates
@@ -1585,6 +1634,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_install_with_auto_fix "$@"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'Verification checksum was incorrect'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_raw_pod_install_capture "$retry_log_file" --repo-update "$@"'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_REMOTE_UPDATES_FILE'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_REPO_UPDATE=1'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_update_for_remote_updates'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod update $pod_names --repo-update'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'snapshot_pbxproj_files'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'exceptions|inputPaths|outputPaths'
@@ -4559,7 +4612,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_match(/\| NNBussCom\s+\| 本地 \| develop \| -\s+\| f0fdc2 \|/, output)
-    assert_match(/\| NNLibrary\s+\| 远端 \| develop \| -\s+\| -\s+\|/, output)
+    assert_match(/\| NNLibrary\s+\| 远端 \| develop \| -\s+\|\s+\|/, output)
     assert_includes helper.commands, [buss_path, ['pull', '--rebase', '--autostash', 'origin', 'develop']]
     refute helper.commands.any? { |path, _args| path.to_s.include?('NNLibrary') }
   ensure

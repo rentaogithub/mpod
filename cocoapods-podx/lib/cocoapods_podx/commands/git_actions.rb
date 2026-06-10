@@ -24,7 +24,7 @@ module CocoapodsPodx
           path = repo[:path]
 
           if action == 'pull' && repo[:source].to_s == '远端'
-            rows << [name, repo[:branch] || '-', '-', repo[:commit] || '-', path, '远端']
+            rows << [name, repo[:branch] || '-', '-', '', path, '远端']
             skipped_count += 1
             next
           end
@@ -517,7 +517,7 @@ module CocoapodsPodx
             targets << { name: name, path: local_repo_path_for(name), source: '本地' }
           else
             branch = pull_remote_branch_for(name)
-            targets << { name: name, path: nil, source: '远端', branch: branch, commit: '-' }
+            targets << { name: name, path: nil, source: '远端', branch: branch }
           end
         end
         targets
@@ -527,15 +527,6 @@ module CocoapodsPodx
         branch = declared_branch_for(name) if respond_to?(:declared_branch_for, true)
         branch = main_git_action_branch if branch.to_s.empty?
         branch.to_s.empty? ? '-' : branch
-      end
-
-      def pull_remote_commit_for(name, branch)
-        return '-' if branch.to_s.empty? || branch.to_s == '-'
-
-        url = CocoapodsPodx::Runtime.remote_repo_url_for(name)
-        CocoapodsPodx::Runtime.send(:remote_branch_commit_hash, url, branch)
-      rescue
-        '-'
       end
 
       def merge_commit_targets(entries)
@@ -842,7 +833,9 @@ module CocoapodsPodx
 
       def git_pull_table_row(row)
         repo, branch, status, detail, _path, source = row
-        [repo, source.to_s.empty? ? '本地' : source, branch, status, detail]
+        display_source = source.to_s.empty? ? '本地' : source
+        display_detail = display_source == '远端' ? git_action_blank_cell : detail
+        [repo, display_source, branch, status, display_detail]
       end
 
       def git_simple_action_table_row(row)
@@ -917,8 +910,14 @@ module CocoapodsPodx
       end
 
       def git_action_cell(value)
+        return '' if value.equal?(git_action_blank_cell)
+
         text = value.to_s.gsub(/\s+/, ' ').strip
         text.empty? ? '-' : text
+      end
+
+      def git_action_blank_cell
+        @git_action_blank_cell ||= Object.new
       end
 
       def git_action_display_width(value)

@@ -447,16 +447,57 @@ run_raw_pod_install_capture() {
   run_capture_with_wait_progress "podx install" "$log_file" pod install "$@"
 }
 
+run_pod_update_for_remote_updates() {
+  updates_file="$1"
+  shift
+  [ -f "$updates_file" ] || return 0
+
+  pod_names="$(awk 'NF && !seen[$0]++ { printf "%s ", $0 }' "$updates_file" 2>/dev/null)"
+  pod_names="$(printf "%s" "$pod_names" | sed 's/[[:space:]]*$//')"
+  [ -n "$pod_names" ] || return 0
+
+  update_log_file="$(mktemp "${TMPDIR:-/tmp}/podx-update-remote.XXXXXX")"
+  echo "【podx install】远端依赖有更新，自动执行 pod update: $pod_names"
+  # shellcheck disable=SC2086
+  run_capture_with_wait_progress "podx update" "$update_log_file" pod update $pod_names --repo-update
+  update_status=$?
+  if [ "$update_status" -eq 0 ]; then
+    print_pod_install_success_log "$update_log_file"
+    rm -f "$update_log_file"
+    return 0
+  fi
+
+  cat "$update_log_file"
+  rm -f "$update_log_file"
+  return "$update_status"
+}
+
 run_pod_install_with_auto_fix() {
   log_file="$(mktemp "${TMPDIR:-/tmp}/podx-install.XXXXXX")"
+  remote_updates_file="$(mktemp "${TMPDIR:-/tmp}/podx-remote-updates.XXXXXX")"
   pbxproj_snapshot_dir="$(snapshot_pbxproj_files)"
+  export COCOAPODS_PODX_REMOTE_UPDATES_FILE="$remote_updates_file"
+  if args_include_repo_update "$@"; then
+    export COCOAPODS_PODX_REPO_UPDATE=1
+  else
+    unset COCOAPODS_PODX_REPO_UPDATE
+  fi
   run_raw_pod_install_capture "$log_file" "$@"
   status=$?
   if [ "$status" -eq 0 ]; then
     print_pod_install_success_log "$log_file"
+    if args_include_repo_update "$@"; then
+      run_pod_update_for_remote_updates "$remote_updates_file" "$@"
+      status=$?
+      if [ "$status" -ne 0 ]; then
+        rm -f "$log_file" "$remote_updates_file"
+        rm -rf "$pbxproj_snapshot_dir"
+        return "$status"
+      fi
+    fi
     restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"
     echo "【podx install】完成"
-    rm -f "$log_file"
+    rm -f "$log_file" "$remote_updates_file"
     rm -rf "$pbxproj_snapshot_dir"
     return 0
   fi
@@ -465,32 +506,40 @@ run_pod_install_with_auto_fix() {
     pod_name="$(extract_pod_install_error_name "$log_file")"
     if args_include_repo_update "$@"; then
       echo "[podx install] 检测到 ${pod_name:-Pod} 校验和不一致；当前已使用 --repo-update，建议执行：podx cache clean ${pod_name:-NAME} 后重试。"
-      rm -f "$log_file"
+      rm -f "$log_file" "$remote_updates_file"
       rm -rf "$pbxproj_snapshot_dir"
       return "$status"
     fi
 
     echo "[podx install] 检测到 ${pod_name:-Pod} 校验和不一致，自动重试：podx install --repo-update"
     retry_log_file="$(mktemp "${TMPDIR:-/tmp}/podx-install-retry.XXXXXX")"
+    export COCOAPODS_PODX_REPO_UPDATE=1
     run_raw_pod_install_capture "$retry_log_file" --repo-update "$@"
     retry_status=$?
     if [ "$retry_status" -eq 0 ]; then
       print_pod_install_success_log "$retry_log_file"
+      run_pod_update_for_remote_updates "$remote_updates_file" "$@"
+      retry_status=$?
+      if [ "$retry_status" -ne 0 ]; then
+        rm -f "$log_file" "$retry_log_file" "$remote_updates_file"
+        rm -rf "$pbxproj_snapshot_dir"
+        return "$retry_status"
+      fi
       restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"
       echo "【podx install】完成"
-      rm -f "$log_file" "$retry_log_file"
+      rm -f "$log_file" "$retry_log_file" "$remote_updates_file"
       rm -rf "$pbxproj_snapshot_dir"
       return 0
     fi
 
     cat "$retry_log_file"
-    rm -f "$log_file" "$retry_log_file"
+    rm -f "$log_file" "$retry_log_file" "$remote_updates_file"
     rm -rf "$pbxproj_snapshot_dir"
     return "$retry_status"
   fi
 
   cat "$log_file"
-  rm -f "$log_file"
+  rm -f "$log_file" "$remote_updates_file"
   rm -rf "$pbxproj_snapshot_dir"
   return "$status"
 }

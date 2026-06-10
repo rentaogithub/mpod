@@ -55,6 +55,9 @@ module CocoapodsPodx
         @install_table_footer_printed = false
         @install_table_footer_registered = false
         @install_table_has_updates = false
+        @install_table_has_remote_updates = false
+        @podfile_lock_checkout_options = nil
+        @remote_branch_commit_cache = nil
       end
 
       def private_source
@@ -203,12 +206,13 @@ module CocoapodsPodx
         end
 
         url = remote_git_url(group_name: group_name, raw_name: remote_name, custom_git_target: custom_git_target)
+        current_commit = podfile_lock_checkout_commit_for(name: name, url: url)
         print_install_dependency_row(
           name: name,
           source: '远端',
           branch: branch,
-          commit: remote_branch_commit_hash(url, branch),
-          update: '-'
+          commit: current_commit,
+          update: remote_dependency_update_status(name, url, branch, current_commit)
         )
         {
           :git => url,
@@ -443,6 +447,9 @@ module CocoapodsPodx
         @install_table_footer_printed = true
         puts install_table_separator(install_dependency_table_widths)
         puts '【podx install】提示 使用mgit pull命令更新代码' if @install_table_has_updates
+        if @install_table_has_remote_updates && ENV['COCOAPODS_PODX_REPO_UPDATE'].to_s != '1'
+          puts '【podx install】提示 使用 podx install --repo-update'
+        end
       end
 
       def install_table_separator(widths)
@@ -592,16 +599,75 @@ module CocoapodsPodx
       def remote_branch_commit_hash(url, branch)
         return '-' if url.to_s.empty? || branch.to_s.empty?
 
+        @remote_branch_commit_cache ||= {}
+        cache_key = [url, branch]
+        return @remote_branch_commit_cache[cache_key] if @remote_branch_commit_cache.key?(cache_key)
+
         timeout = (ENV['COCOAPODS_PODX_INSTALL_COMMIT_TIMEOUT'] || '3').to_f
         stdout, status = Timeout.timeout(timeout) do
           Open3.capture2e('git', 'ls-remote', url, "refs/heads/#{branch}")
         end
-        return '-' unless status.success?
+        return @remote_branch_commit_cache[cache_key] = '-' unless status.success?
 
         hash = stdout.to_s.split(/\s+/).first.to_s
-        hash.empty? ? '-' : hash[0, 6]
+        @remote_branch_commit_cache[cache_key] = (hash.empty? ? '-' : hash[0, 6])
       rescue StandardError
         '-'
+      end
+
+      def podfile_lock_checkout_commit_for(name:, url:)
+        checkout_options = podfile_lock_checkout_options
+        raw_name = raw_pod_name(name)
+        candidates = [name.to_s, raw_name].uniq
+        candidates.each do |candidate|
+          options = checkout_options[candidate]
+          next unless options.is_a?(Hash)
+          next if options['git'].to_s != url.to_s && options[:git].to_s != url.to_s
+
+          commit = options['commit'] || options[:commit]
+          return short_install_commit(commit)
+        end
+
+        '-'
+      end
+
+      def podfile_lock_checkout_options
+        return @podfile_lock_checkout_options if @podfile_lock_checkout_options
+
+        lockfile = File.join(project_directory, 'Podfile.lock')
+        return @podfile_lock_checkout_options = {} unless File.exist?(lockfile)
+
+        data = YAML.load_file(lockfile)
+        @podfile_lock_checkout_options = data.is_a?(Hash) ? (data['CHECKOUT OPTIONS'] || {}) : {}
+      rescue StandardError
+        @podfile_lock_checkout_options = {}
+      end
+
+      def short_install_commit(commit)
+        value = commit.to_s.strip
+        value.empty? ? '-' : value[0, 6]
+      end
+
+      def remote_dependency_update_status(name, url, branch, current_commit)
+        current = current_commit.to_s.strip
+        return '-' if current.empty? || current == '-'
+
+        remote = remote_branch_commit_hash(url, branch)
+        return '未知' if remote.to_s.empty? || remote == '-'
+        return '-' if remote == current
+
+        @install_table_has_remote_updates = true
+        record_remote_dependency_update(name)
+        '有更新'
+      end
+
+      def record_remote_dependency_update(name)
+        path = ENV['COCOAPODS_PODX_REMOTE_UPDATES_FILE'].to_s
+        return if path.empty?
+
+        File.open(path, 'a') { |file| file.puts(name) }
+      rescue StandardError
+        nil
       end
 
       def local_repo_update_status(repo_path, branch)
