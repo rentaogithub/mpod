@@ -1,4 +1,8 @@
 require 'fileutils'
+require 'cgi'
+require 'net/http'
+require 'tmpdir'
+require 'uri'
 require_relative '../rules'
 
 module CocoapodsPodx
@@ -74,6 +78,13 @@ module CocoapodsPodx
               next
             end
 
+            unless mgit_publish_main_repo?(name)
+              mgit_publish_push_remote_repo_branch(url, base_branch, target_branch, push_mode)
+              publish_rows << [name, base_branch, target_branch, '-', push_mode == 'skip' ? 'skip' : 'remote', 'ok']
+              done_count += 1
+              next
+            end
+
             FileUtils.rm_rf(repo_dir) if File.exist?(repo_dir)
             run_git!(work_dir, 'clone', url, repo_dir)
 
@@ -118,6 +129,8 @@ module CocoapodsPodx
           raise Pod::Informative, "mgit publish [failed] #{failures.size}\n#{failures.join("\n")}"
         end
 
+        mgit_publish_cleanup_work_dir(work_dir) unless @dry_run
+
         checkout_rows = []
         checkout_rows << mgit_publish_checkout_project_repo(target_branch)
         checkout_rows.concat(mgit_publish_sync_local_repos(target_branch))
@@ -129,6 +142,87 @@ module CocoapodsPodx
         ) if checkout_rows.any?
 
         Pod::UI.puts @dry_run ? "mgit publish [dry-run] #{done_count}" : "mgit publish [done] #{done_count}"
+      end
+
+      def mgit_publish_cleanup_work_dir(work_dir)
+        return if work_dir.to_s.strip.empty?
+        return unless File.directory?(work_dir)
+
+        Dir.children(work_dir).each do |child|
+          FileUtils.rm_rf(File.join(work_dir, child))
+        end
+      rescue
+        nil
+      end
+
+      def mgit_publish_push_remote_repo_branch(url, base_branch, target_branch, push_mode)
+        return mgit_publish_remote_branch_hash(url, base_branch) if push_mode == 'skip'
+
+        return if mgit_publish_create_remote_branch_via_api(url, base_branch, target_branch)
+
+        mgit_publish_push_remote_repo_branch_via_git(url, base_branch, target_branch)
+      end
+
+      def mgit_publish_push_remote_repo_branch_via_git(url, base_branch, target_branch)
+        mgit_publish_remote_branch_hash(url, base_branch)
+
+        Dir.mktmpdir('cocoapods-podx-mgit-publish-remote') do |repo_dir|
+          run_git!(repo_dir, 'init', '-q')
+          run_git!(repo_dir, 'fetch', '--depth', '1', url, "refs/heads/#{base_branch}")
+          run_git!(repo_dir, 'push', url, "FETCH_HEAD:refs/heads/#{target_branch}")
+        end
+      end
+
+      def mgit_publish_remote_branch_hash(url, branch)
+        output = run_git!(project_directory, 'ls-remote', url, "refs/heads/#{branch}")
+        hash = output.to_s.split(/\s+/).first.to_s
+        raise "远端分支不存在：#{branch}" if hash.empty?
+
+        hash
+      end
+
+      def mgit_publish_create_remote_branch_via_api(url, base_branch, target_branch)
+        uri = mgit_publish_gitlab_create_branch_uri(url)
+        return false unless uri
+
+        token = ENV['COCOAPODS_PODX_GIT_TOKEN'].to_s.strip
+        token = ENV['GITLAB_TOKEN'].to_s.strip if token.empty?
+        token = ENV['PRIVATE_TOKEN'].to_s.strip if token.empty?
+        user = ENV['COCOAPODS_PODX_GIT_USER'].to_s.strip
+        password = ENV['COCOAPODS_PODX_GIT_PASSWORD'].to_s.strip
+        return false if token.empty? && (user.empty? || password.empty?)
+
+        request = Net::HTTP::Post.new(uri)
+        request['PRIVATE-TOKEN'] = token unless token.empty?
+        request.basic_auth(user, password) if token.empty? && !user.empty?
+        request.set_form_data('branch' => target_branch, 'ref' => base_branch)
+        response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == 'https', open_timeout: 5, read_timeout: 15) do |http|
+          http.request(request)
+        end
+
+        return true if response.is_a?(Net::HTTPSuccess)
+
+        body = response.body.to_s
+        if response.code.to_i == 400 && body.match?(/Branch already exists|already exists/i)
+          raise "远端发布分支已存在：#{target_branch}"
+        end
+
+        raise "远端 API 创建分支失败：HTTP #{response.code} #{body[0, 120]}"
+      rescue URI::InvalidURIError
+        false
+      end
+
+      def mgit_publish_gitlab_create_branch_uri(url)
+        uri = URI(url.to_s)
+        return nil unless %w[http https].include?(uri.scheme)
+
+        project_path = uri.path.to_s.sub(%r{\A/}, '').sub(/\.git\z/, '')
+        return nil if project_path.empty?
+
+        api_path = "/api/v4/projects/#{CGI.escape(project_path)}/repository/branches"
+        default_port = (uri.scheme == 'https' ? 443 : 80)
+        host = uri.port == default_port ? uri.host : "#{uri.host}:#{uri.port}"
+        URI("#{uri.scheme}://#{host}#{api_path}")
       end
 
       def mgit_publish_sync_overlay_repos(target_branch)

@@ -310,6 +310,94 @@ detect_podx_lib_and_gem_env() {
   if [ -n "$gem_home" ]; then
     export GEM_HOME="$gem_home"
   fi
+  load_podx_git_token_from_keychain
+}
+
+podx_git_token_service() {
+  echo "${COCOAPODS_PODX_GIT_TOKEN_SERVICE:-cocoapods-podx-git-token}"
+}
+
+load_podx_git_token_from_keychain() {
+  [ -z "${COCOAPODS_PODX_GIT_TOKEN:-}" ] || return 0
+  command -v security >/dev/null 2>&1 || return 0
+
+  token="$(security find-generic-password -a "${USER:-$LOGNAME}" -s "$(podx_git_token_service)" -w 2>/dev/null || true)"
+  [ -z "$token" ] || export COCOAPODS_PODX_GIT_TOKEN="$token"
+}
+
+podx_git_token_command() {
+  command="$1"
+  shift || true
+  [ -n "$command" ] || command="status"
+
+  case "$command" in
+    status)
+      if [ -n "${COCOAPODS_PODX_GIT_TOKEN:-}" ]; then
+        echo "COCOAPODS_PODX_GIT_TOKEN [env] 已配置"
+        return 0
+      fi
+      if command -v security >/dev/null 2>&1 &&
+         security find-generic-password -a "${USER:-$LOGNAME}" -s "$(podx_git_token_service)" -w >/dev/null 2>&1; then
+        echo "COCOAPODS_PODX_GIT_TOKEN [keychain] 已配置"
+        return 0
+      fi
+      echo "COCOAPODS_PODX_GIT_TOKEN [missing] 未配置"
+      echo "用法：podx git-token set YOUR_GITLAB_TOKEN"
+      return 1
+      ;;
+    set)
+      token="$1"
+      if [ -z "$token" ]; then
+        if [ ! -t 0 ]; then
+          echo "[!] 缺少 GitLab Token：podx git-token set YOUR_GITLAB_TOKEN" >&2
+          return 1
+        fi
+        printf "请输入 GitLab Token: "
+        stty -echo 2>/dev/null || true
+        IFS= read -r token
+        stty echo 2>/dev/null || true
+        printf "\n"
+      fi
+      if [ -z "$token" ]; then
+        echo "[!] GitLab Token 不能为空" >&2
+        return 1
+      fi
+      command -v security >/dev/null 2>&1 || {
+        echo "[!] 当前系统不支持 macOS Keychain security 命令" >&2
+        return 1
+      }
+      security add-generic-password -a "${USER:-$LOGNAME}" -s "$(podx_git_token_service)" -w "$token" -U >/dev/null
+      echo "COCOAPODS_PODX_GIT_TOKEN [keychain] 已保存"
+      ;;
+    clear|delete|remove)
+      if command -v security >/dev/null 2>&1 &&
+         security delete-generic-password -a "${USER:-$LOGNAME}" -s "$(podx_git_token_service)" >/dev/null 2>&1; then
+        echo "COCOAPODS_PODX_GIT_TOKEN [keychain] 已清除"
+      else
+        echo "COCOAPODS_PODX_GIT_TOKEN [keychain] 未找到"
+      fi
+      ;;
+    help|--help|-h)
+      cat <<'HELP'
+podx git-token 用于配置 GitLab API Token，供 mgit publish 远端创建组件分支使用。
+
+用法:
+  podx git-token status
+  podx git-token set YOUR_GITLAB_TOKEN
+  podx git-token set
+  podx git-token clear
+
+说明:
+  Token 保存到 macOS Keychain，不写入工程文件或 Git。
+  podx/mgit 执行时会自动读取 Keychain 并注入 COCOAPODS_PODX_GIT_TOKEN。
+HELP
+      ;;
+    *)
+      echo "[!] 未知 git-token 命令：$command" >&2
+      echo "用法：podx git-token status|set|clear" >&2
+      return 1
+      ;;
+  esac
 }
 
 run_publish_only() {
@@ -712,6 +800,9 @@ pod 扩展命令:
   podx publish history [N]         # 查看 Jenkins 最近构建
   podx publish doctor [BUILD]      # 分析 Jenkins 打包失败
   podx publish fix [BUILD]         # 半自动修复 Jenkins 打包失败
+  podx git-token status            # 查看 GitLab API Token 配置状态
+  podx git-token set               # 保存 GitLab API Token 到 macOS Keychain
+  podx git-token clear             # 清除 Keychain 中的 GitLab API Token
   podx ai init                     # 初始化 AI 辅助配置
   podx hooks install               # 安装版本化提交保护 hook
   podx version                     # 查看版本
@@ -795,6 +886,10 @@ case "$1" in
   tools)
     shift
     show_modern_cli_tools
+    ;;
+  git-token)
+    shift
+    podx_git_token_command "$@"
     ;;
   publish)
     if ! pod_available; then

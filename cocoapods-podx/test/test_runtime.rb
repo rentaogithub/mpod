@@ -1694,6 +1694,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish history [N]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish doctor [BUILD]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish fix [BUILD]'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx git-token status'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx git-token set'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx git-token clear'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx_git_token_command'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'security add-generic-password'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'load_podx_git_token_from_keychain'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --branch=develop'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish tf --branch=release/x.x.x'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish app --branch=release/x.x.x'
@@ -1752,6 +1758,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'mgit_standalone'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_cocoapods_gem_home'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_podx_lib_path'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, 'load_podx_git_token_from_keychain'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, 'security find-generic-password'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'progress_first_output_seen'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, '[ "$progress_first_output_seen" -eq 0 ]'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'print_progress_log_chunk'
@@ -3717,6 +3725,138 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     error = assert_raises(Pod::Informative) { publisher.validate_mgit_publish_target_branch!('--branch') }
     assert_includes error.message, '发布分支格式不正确'
+  end
+
+  def test_mgit_publish_cleanup_work_dir_keeps_empty_work_dir
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+    end.new
+
+    work_dir = Dir.mktmpdir('cocoapods-podx-mgit-publish-work')
+    FileUtils.mkdir_p(File.join(work_dir, 'nnios', '.git'))
+    FileUtils.mkdir_p(File.join(work_dir, 'nnbusscom'))
+    File.write(File.join(work_dir, 'log.txt'), 'debug')
+
+    publisher.mgit_publish_cleanup_work_dir(work_dir)
+
+    assert File.directory?(work_dir)
+    assert_empty Dir.children(work_dir)
+  ensure
+    FileUtils.rm_rf(work_dir) if work_dir
+  end
+
+  def test_mgit_publish_creates_component_branch_by_api_without_git_fetch
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+
+      attr_reader :api_args, :commands
+
+      def initialize
+        @api_args = []
+        @commands = []
+      end
+
+      def mgit_publish_create_remote_branch_via_api(url, base_branch, target_branch)
+        @api_args << [url, base_branch, target_branch]
+        true
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+      end
+    end.new
+
+    publisher.mgit_publish_push_remote_repo_branch(
+      'http://git.example.com/nn_ios/nnbusscom.git',
+      'develop',
+      'release/5.14.2',
+      'normal'
+    )
+
+    assert_equal [['http://git.example.com/nn_ios/nnbusscom.git', 'develop', 'release/5.14.2']], publisher.api_args
+    assert_empty publisher.commands
+  end
+
+  def test_mgit_publish_falls_back_to_shallow_fetch_without_clone
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+
+      attr_reader :commands
+
+      def initialize
+        @commands = []
+      end
+
+      def project_directory
+        '/tmp/app'
+      end
+
+      def mgit_publish_create_remote_branch_via_api(_url, _base_branch, _target_branch)
+        false
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        return "abcdef1234567890\trefs/heads/develop\n" if args.first == 'ls-remote'
+
+        ''
+      end
+    end.new
+
+    publisher.mgit_publish_push_remote_repo_branch(
+      'http://git.example.com/nn_ios/nnbusscom.git',
+      'develop',
+      'release/5.14.2',
+      'normal'
+    )
+
+    command_args = publisher.commands.map(&:last)
+    assert_equal ['ls-remote', 'http://git.example.com/nn_ios/nnbusscom.git', 'refs/heads/develop'], command_args[0]
+    assert_includes command_args, ['init', '-q']
+    assert_includes command_args, ['fetch', '--depth', '1', 'http://git.example.com/nn_ios/nnbusscom.git', 'refs/heads/develop']
+    assert_includes command_args, ['push', 'http://git.example.com/nn_ios/nnbusscom.git', 'FETCH_HEAD:refs/heads/release/5.14.2']
+    refute publisher.commands.any? { |_path, args| args.include?('clone') }
+  end
+
+  def test_mgit_publish_component_skip_mode_only_checks_remote_base_branch
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+
+      attr_reader :commands
+
+      def initialize
+        @commands = []
+      end
+
+      def project_directory
+        '/tmp/app'
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        "abcdef1234567890\trefs/heads/develop\n"
+      end
+    end.new
+
+    publisher.mgit_publish_push_remote_repo_branch(
+      'http://git.example.com/nn_ios/nnbusscom.git',
+      'develop',
+      'release/5.14.2',
+      'skip'
+    )
+
+    assert_equal 1, publisher.commands.length
+    assert_equal ['ls-remote', 'http://git.example.com/nn_ios/nnbusscom.git', 'refs/heads/develop'], publisher.commands.first[1]
+  end
+
+  def test_mgit_publish_builds_gitlab_create_branch_uri
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+    end.new
+
+    uri = publisher.mgit_publish_gitlab_create_branch_uri('http://git.leigod.top/nn_ios/nnbusscom.git')
+
+    assert_equal 'http://git.leigod.top/api/v4/projects/nn_ios%2Fnnbusscom/repository/branches', uri.to_s
   end
 
   def test_mgit_publish_project_specific_actions_are_opt_in

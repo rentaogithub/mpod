@@ -102,6 +102,18 @@ detect_podx_lib_path() {
   fi
 }
 
+podx_git_token_service() {
+  echo "${COCOAPODS_PODX_GIT_TOKEN_SERVICE:-cocoapods-podx-git-token}"
+}
+
+load_podx_git_token_from_keychain() {
+  [ -z "${COCOAPODS_PODX_GIT_TOKEN:-}" ] || return 0
+  command -v security >/dev/null 2>&1 || return 0
+
+  token="$(security find-generic-password -a "${USER:-$LOGNAME}" -s "$(podx_git_token_service)" -w 2>/dev/null || true)"
+  [ -z "$token" ] || export COCOAPODS_PODX_GIT_TOKEN="$token"
+}
+
 gem_home=""
 podx_lib="$(detect_podx_lib_path)"
 if [ -z "$podx_lib" ]; then
@@ -116,6 +128,8 @@ fi
 if [ -n "$gem_home" ]; then
   export GEM_HOME="$gem_home"
 fi
+
+load_podx_git_token_from_keychain
 
 run_with_wait_progress "mgit" ruby -rcocoapods_podx/mgit_standalone -e 'CocoapodsPodx::MgitStandalone.run(ARGV)' -- "$@"
 exit $?
