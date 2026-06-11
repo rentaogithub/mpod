@@ -336,6 +336,92 @@ module CocoapodsPodx
       File.expand_path(File.join(project_directory, 'Development Pods', repo_dir))
     end
 
+    def update_local_repo(name, dry_run: false, pull: true, expected_branch: nil, quiet: false)
+      repo_path = local_repo_path_for(name)
+      app_branch = main_app_branch
+      declared_branch = declared_branch_for(name)
+      expected_branch = expected_branch || app_branch || declared_branch || 'main'
+      return clone_local_repo(name, repo_path, expected_branch, dry_run: dry_run, quiet: quiet) unless File.directory?(repo_path)
+      return reclone_invalid_local_repo(name, repo_path, expected_branch, dry_run: dry_run, quiet: quiet) unless git_work_tree?(repo_path)
+
+      current_branch = git_branch_for(repo_path)
+      return false if current_branch == expected_branch && !pull
+
+      unless dry_run
+        should_change_branch = current_branch != expected_branch
+        if should_change_branch
+          raise "本地仓库存在未提交修改：#{repo_path}" if git_dirty?(repo_path)
+          run_git!(repo_path, 'fetch', 'origin')
+        elsif pull
+          run_git!(repo_path, 'fetch', 'origin')
+          return false unless git_remote_has_updates?(repo_path, expected_branch)
+
+          raise "本地仓库存在未提交修改：#{repo_path}" if git_dirty?(repo_path)
+        end
+      end
+
+      if current_branch.nil?
+        checkout_message = "[checkout] detached -> #{expected_branch}"
+        if dry_run
+          Pod::UI.puts "#{name} [dry-run] #{checkout_message}" unless quiet
+          return true
+        end
+
+        checkout_branch!(repo_path, expected_branch)
+        run_git!(repo_path, 'pull', '--ff-only', 'origin', expected_branch)
+        Pod::UI.puts [name, '[updated]', checkout_message].join(' ') unless quiet
+        return true
+      end
+
+      if current_branch == expected_branch
+        run_git!(repo_path, 'pull', '--ff-only', 'origin', expected_branch) unless dry_run
+        return false
+      end
+
+      checkout_message = "[checkout] #{current_branch} -> #{expected_branch}"
+      if dry_run
+        Pod::UI.puts "#{name} [dry-run] #{checkout_message}" unless quiet
+        return true
+      end
+
+      checkout_branch!(repo_path, expected_branch)
+      run_git!(repo_path, 'pull', '--ff-only', 'origin', expected_branch)
+      Pod::UI.puts [name, '[updated]', checkout_message].join(' ') unless quiet
+      true
+    end
+
+    def clone_local_repo(name, repo_path, expected_branch, dry_run: false, quiet: false)
+      remote_url = CocoapodsPodx::Runtime.remote_repo_url_for(name)
+
+      if dry_run
+        Pod::UI.puts "#{name} [dry-run] [clone] #{remote_url} -> #{repo_path} #{expected_branch}" unless quiet
+        return true
+      end
+
+      FileUtils.mkdir_p(File.dirname(repo_path))
+      run_git!(File.dirname(repo_path), 'clone', '--branch', expected_branch, remote_url, repo_path)
+      Pod::UI.puts "#{name} [updated] [clone] #{expected_branch}" unless quiet
+      true
+    end
+
+    def reclone_invalid_local_repo(name, repo_path, expected_branch, dry_run: false, quiet: false)
+      backup_path = "#{repo_path}.invalid-#{Time.now.strftime('%Y%m%d%H%M%S')}"
+
+      if dry_run
+        remote_url = CocoapodsPodx::Runtime.remote_repo_url_for(name)
+        unless quiet
+          Pod::UI.puts "#{name} [dry-run] [reclone] #{repo_path} -> #{backup_path}"
+          Pod::UI.puts "#{name} [dry-run] [clone] #{remote_url} -> #{repo_path} #{expected_branch}"
+        end
+        return true
+      end
+
+      FileUtils.mv(repo_path, backup_path)
+      clone_local_repo(name, repo_path, expected_branch, dry_run: false, quiet: quiet)
+      Pod::UI.puts "#{name} [backup] #{backup_path}" unless quiet
+      true
+    end
+
     def fast_local_repo_path_for(name)
       root = File.join(project_directory, 'Development Pods')
       return nil unless File.directory?(root)
@@ -420,6 +506,14 @@ module CocoapodsPodx
       return true unless status.success?
 
       !stdout.strip.empty?
+    end
+
+    def git_remote_has_updates?(path, branch)
+      local, local_status = Open3.capture2('git', '-C', path, 'rev-parse', branch)
+      remote, remote_status = Open3.capture2('git', '-C', path, 'rev-parse', "origin/#{branch}")
+      return true unless local_status.success? && remote_status.success?
+
+      local.strip != remote.strip
     end
 
     def git_status_lines(path)

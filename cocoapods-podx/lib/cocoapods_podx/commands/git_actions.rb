@@ -798,6 +798,15 @@ module CocoapodsPodx
         "#{result}#{suffix}"
       end
 
+      def git_action_format_duration(seconds)
+        total_seconds = [seconds.to_f.round, 0].max
+        minutes = total_seconds / 60
+        remaining_seconds = total_seconds % 60
+        return "#{remaining_seconds}s" if minutes.zero?
+
+        "#{minutes}m#{remaining_seconds.to_s.rjust(2, '0')}s"
+      end
+
       def git_changed_file_summary(status_lines, max_width = 50)
         files = Array(status_lines).map { |line| git_status_file_name(line) }.reject(&:empty?).uniq
         git_action_summary(files, max_width)

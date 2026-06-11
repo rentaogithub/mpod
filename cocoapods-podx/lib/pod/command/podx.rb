@@ -98,8 +98,8 @@ class Pod::Command::Podx < Pod::Command
             podx dry-run <command>         预览 publish、update、组件切换等动作
             podx open                      打开当前工程 .xcworkspace
             podx open --overlay            打开 Podfile.overlay
-            podx ai init                   生成 Claude Code/CodeGraph/Code Review Graph 接入模板
-            podx ai update                 更新 CodeGraph，并检查 Code Review Graph 改动影响
+            podx ai init                   生成 Claude Code/Codex CodeGraph MCP 接入模板
+            podx ai update                 更新 Codex CodeGraph MCP，并检查改动影响
             podx ai doctor                 检查 AI 辅助工具状态
             podx ai mcp                    输出 Hermes MCP 注册说明
             podx hooks install             安装版本化提交保护 hook

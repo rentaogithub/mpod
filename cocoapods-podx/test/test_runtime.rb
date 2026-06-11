@@ -1633,6 +1633,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --clean "$@"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_install_with_auto_fix "$@"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'cleanup_overlay_pods_dir'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'sync_graph_after_pod_install'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '.claude/mcps/update-codegraph.sh'
+    refute_includes CocoapodsPodx::ShimGenerator.podx, '【podx install】同步图谱索引规则'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '/bin/sh "$graph_script" >/dev/null 2>&1'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'overlay_pod_names'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'Podfile.overlay'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'group_name_from_pod_line'
@@ -1698,6 +1702,16 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx git-token set'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx git-token clear'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx_git_token_command'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx_git_token_validate'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx_gitlab_url'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'git_base_url'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, "begin\ntoken = ENV.fetch"
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'validation_status=$?'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'print_podx_git_token_setup_guide'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '请访问 ${gitlab_url%/}/profile/personal_access_tokens'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'Scopes 只勾选 api'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '/api/v4/user'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_GIT_TOKEN [$source] 有效'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'security add-generic-password'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'load_podx_git_token_from_keychain'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx publish --branch=develop'
@@ -1815,6 +1829,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes File.read(File.join(ai_dir, '.gitignore')), '.claude/mcps/.env'
     assert_includes File.read(File.join(ai_dir, '.gitignore')), '.mgit-publish/'
     assert_includes File.read(File.join(ai_dir, '.gitignore')), 'Development Pods/'
+    assert_includes File.read(File.join(ai_dir, '.gitignore')), '.codegraphignore'
+    assert_includes File.read(File.join(ai_dir, '.gitignore')), '.code-review-graphignore'
+    assert_includes File.read(File.join(ai_dir, '.gitignore')), '.podx/codegraph_ignore'
     assert_includes File.read(File.join(ai_dir, '.gitignore')), '.podx/skill_runs.yml'
     assert_includes File.read(File.join(ai_dir, '.gitignore')), '.podx/skill_snapshot.md'
     assert_includes File.read(File.join(ai_dir, '.gitignore')), '.podx/skill_ci.json'
@@ -1840,11 +1857,109 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal 1, gitignore.scan(/^\.hermes$/).size
     assert_includes gitignore, '.mgit-publish/'
     assert_includes gitignore, 'Development Pods/'
+    assert_includes gitignore, '.codegraphignore'
+    assert_includes gitignore, '.code-review-graphignore'
+    assert_includes gitignore, '.podx/codegraph_ignore'
     assert_includes gitignore, '.podx/skill_runs.yml'
     assert_includes gitignore, '.podx/skill_snapshot.md'
     assert_includes gitignore, '.podx/skill_ci.json'
   ensure
     FileUtils.rm_rf(ai_dir) if ai_dir
+  end
+
+  def test_ai_bootstrap_codegraph_ignore_keeps_only_overlay_local_development_pods
+    ai_dir = Dir.mktmpdir('cocoapods-podx-ai-codegraph-ignore')
+    File.write(File.join(ai_dir, 'Podfile.overlay'), "pod 'NNBussCom'\n")
+    File.write(File.join(ai_dir, 'Podfile'), <<~RUBY)
+      pod 'NNLogin', :branch => 'develop', :group_name => 'NNBussCom'
+      pod 'NNBasciCommon', :branch => 'develop'
+    RUBY
+    FileUtils.mkdir_p(File.join(ai_dir, 'Development Pods', 'nnbusscom'))
+    FileUtils.mkdir_p(File.join(ai_dir, 'Development Pods', 'nnbascicommon'))
+
+    CocoapodsPodx::AiBootstrap.init(ai_dir, force: false)
+    script = File.join(ai_dir, '.claude', 'mcps', 'update-codegraph.sh')
+    assert system({ 'CODE_REVIEW_GRAPH_BIN' => '/usr/bin/true' }, '/bin/sh', script)
+
+    ignore = File.read(File.join(ai_dir, '.code-review-graphignore'))
+    assert_includes ignore, 'Pods/NNBussCom/**'
+    assert_includes ignore, 'Pods/NNLogin/**'
+    assert_includes ignore, 'Development Pods/nnbascicommon/**'
+    refute_includes ignore, 'Pods/NNBasciCommon/**'
+    refute_includes ignore, 'Development Pods/nnbusscom/**'
+  ensure
+    FileUtils.rm_rf(ai_dir) if ai_dir
+  end
+
+  def test_ai_update_warns_once_when_code_review_graph_missing
+    ai_dir = Dir.mktmpdir('cocoapods-podx-ai-codegraph-missing')
+    home_dir = Dir.mktmpdir('cocoapods-podx-ai-home-missing')
+    File.write(File.join(ai_dir, 'Podfile.overlay'), '')
+    File.write(File.join(ai_dir, 'Podfile'), '')
+
+    CocoapodsPodx::AiBootstrap.init(ai_dir, force: false)
+    script = File.join(ai_dir, '.claude', 'mcps', 'update-codegraph.sh')
+    missing_codegraph = File.join(ai_dir, 'missing-code-review-graph')
+    output = IO.popen(
+      {
+        'HOME' => home_dir,
+        'CODE_REVIEW_GRAPH_BIN' => missing_codegraph
+      },
+      ['/bin/sh', script],
+      err: [:child, :out],
+      &:read
+    )
+
+    assert_equal 1, output.scan('warning: 未找到 code-review-graph').size
+    refute_includes output, 'CodeGraph runtime'
+  ensure
+    FileUtils.rm_rf(ai_dir) if ai_dir
+    FileUtils.rm_rf(home_dir) if home_dir
+  end
+
+  def test_ai_update_finds_code_review_graph_in_user_python_bin
+    ai_dir = Dir.mktmpdir('cocoapods-podx-ai-codegraph-python-bin')
+    home_dir = Dir.mktmpdir('cocoapods-podx-ai-home')
+    File.write(File.join(ai_dir, 'Podfile.overlay'), '')
+    File.write(File.join(ai_dir, 'Podfile'), '')
+    python_bin = File.join(home_dir, 'Library', 'Python', '3.14', 'bin')
+    FileUtils.mkdir_p(python_bin)
+    fake_codegraph = File.join(python_bin, 'code-review-graph')
+    File.write(fake_codegraph, <<~SH)
+      #!/bin/sh
+      if [ "${1:-}" = "detect-changes" ]; then
+        echo "Analyzed 3 changed file(s):"
+        echo "  - 2 changed function(s)/class(es)"
+        echo "  - 1 test gap(s)"
+        echo "  - Overall risk score: 0.40"
+      else
+        echo "INFO: FTS index rebuilt: 100 rows indexed"
+      fi
+      exit 0
+    SH
+    FileUtils.chmod('+x', fake_codegraph)
+
+    CocoapodsPodx::AiBootstrap.init(ai_dir, force: false)
+    script = File.join(ai_dir, '.claude', 'mcps', 'update-codegraph.sh')
+    output = IO.popen(
+      {
+        'HOME' => home_dir,
+        'CODE_REVIEW_GRAPH_BIN' => File.join(ai_dir, 'missing-code-review-graph')
+      },
+      ['/bin/sh', script],
+      err: [:child, :out],
+      &:read
+    )
+
+    assert_includes output, '【CodeGraph】索引规则已同步'
+    assert_includes output, '【CodeGraph】图谱已更新'
+    assert_includes output, '【CodeGraph】影响检查：3 个文件，风险 0.40，测试缺口 1'
+    assert_includes output, '【podx ai】完成'
+    refute_includes output, 'warning: 未找到 code-review-graph'
+    refute_includes output, 'INFO: FTS index rebuilt'
+  ensure
+    FileUtils.rm_rf(ai_dir) if ai_dir
+    FileUtils.rm_rf(home_dir) if home_dir
   end
 
   def test_jenkins_failure_lines_prioritize_cocoapods_invalid_podfile
@@ -3687,6 +3802,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
+  def test_mgit_standalone_has_local_repo_sync_for_publish
+    assert CocoapodsPodx::MgitStandalone.private_method_defined?(:update_local_repo)
+    assert CocoapodsPodx::MgitStandalone.private_method_defined?(:clone_local_repo)
+    assert CocoapodsPodx::MgitStandalone.private_method_defined?(:reclone_invalid_local_repo)
+    assert CocoapodsPodx::MgitStandalone.private_method_defined?(:git_remote_has_updates?)
+  end
+
   def test_mgit_publish_build_number_uses_release_version_parts
     publisher = Class.new do
       include CocoapodsPodx::Commands::MgitPublish
@@ -3818,6 +3940,35 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     refute publisher.commands.any? { |_path, args| args.include?('clone') }
   end
 
+  def test_mgit_publish_api_auth_failure_falls_back_to_git
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+    end.new
+
+    original_start = Net::HTTP.method(:start)
+    original_token = ENV['COCOAPODS_PODX_GIT_TOKEN']
+    ENV['COCOAPODS_PODX_GIT_TOKEN'] = 'invalid-token'
+
+    [401, 403].each do |status_code|
+      Net::HTTP.define_singleton_method(:start) do |*_args, &_block|
+        Struct.new(:code, :body).new(status_code.to_s, '')
+      end
+
+      refute publisher.mgit_publish_create_remote_branch_via_api(
+        'http://git.example.com/nn_ios/nnbusscom.git',
+        'develop',
+        'release/5.14.2'
+      )
+    end
+  ensure
+    Net::HTTP.define_singleton_method(:start, original_start) if original_start
+    if original_token
+      ENV['COCOAPODS_PODX_GIT_TOKEN'] = original_token
+    else
+      ENV.delete('COCOAPODS_PODX_GIT_TOKEN')
+    end
+  end
+
   def test_mgit_publish_component_skip_mode_only_checks_remote_base_branch
     publisher = Class.new do
       include CocoapodsPodx::Commands::MgitPublish
@@ -3847,6 +3998,40 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_equal 1, publisher.commands.length
     assert_equal ['ls-remote', 'http://git.example.com/nn_ios/nnbusscom.git', 'refs/heads/develop'], publisher.commands.first[1]
+  end
+
+  def test_mgit_publish_output_hides_config_and_local_checkout_tables
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+
+      def initialize(project_dir)
+        @project_dir = project_dir
+        @pod_names = ['feature/5.14.9_newimprove']
+        @dry_run = true
+        @git_publish_base_branch = nil
+        @git_publish_push_mode = nil
+        @git_publish_work_dir = nil
+      end
+
+      def project_directory
+        @project_dir
+      end
+    end.new(@project_dir)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+    output, = capture_io do
+      publisher.publish_git_branches
+    end
+
+    assert_includes output, 'mgit publish feature/5.14.9_newimprove 预览中...'
+    assert_includes output, '【mgit publish 预览】'
+    assert_includes output, 'mgit publish feature/5.14.9_newimprove 预览完成'
+    assert_match(/【publish 耗时】\d+(?:m\d{2})?s/, output)
+    refute_includes output, '【mgit publish 配置】'
+    refute_includes output, '【本地仓库切换'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
   def test_mgit_publish_builds_gitlab_create_branch_uri
@@ -5289,7 +5474,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_includes rows, ['发布分支', '配置', 'develop->release/x.x.x', 'mgit publish']
     assert_includes rows, ['合并保护', '默认', '还原Podfile', 'pull/merge']
-    assert_includes rows, ['本地产物', '默认', '.mgit-publish/, Development Pods/, .podx/skills.yml, .podx/skill_runs.yml, .podx/skill_snapshot.md, .podx/skill_ci.json, .podx/rules_snapshot.json, .podx/pipeline_ci.sh, .podx/pipeline_snapshot.json, .podx/pipeline_report.md', '.gitignore']
+    assert_includes rows, ['本地产物', '默认', '.mgit-publish/, Development Pods/, .codegraphignore, .code-review-graphignore, .podx/skills.yml, .podx/codegraph_ignore, .podx/skill_runs.yml, .podx/skill_snapshot.md, .podx/skill_ci.json, .podx/rules_snapshot.json, .podx/pipeline_ci.sh, .podx/pipeline_snapshot.json, .podx/pipeline_report.md', '.gitignore']
     assert_includes rows, ['Podfile分支', '配置', '组件branch->发布分支', 'mgit publish']
     assert_includes rows, ['iOS版本', '配置', '改Version/Build', 'mgit publish']
     refute rows.any? { |row| row.first == 'iOS Build' }
@@ -5307,7 +5492,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     rules = CocoapodsPodx::Rules.local_artifact_gitignore_rules(config_path: config_path)
 
-    assert_equal ['.release-work/', 'Development Pods/', '.podx/skills.yml', '.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_ci.sh', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], rules
+    assert_equal ['.release-work/', 'Development Pods/', '.codegraphignore', '.code-review-graphignore', '.podx/skills.yml', '.podx/codegraph_ignore', '.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_ci.sh', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], rules
   ensure
     FileUtils.rm_rf(config_dir) if config_dir
   end
@@ -5317,7 +5502,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     missing = rule.missing_gitignore_rules(".mgit-publish/\nDevelopment Pods/\n")
 
-    assert_equal ['.podx/skills.yml', '.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_ci.sh', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], missing
+    assert_equal ['.codegraphignore', '.code-review-graphignore', '.podx/skills.yml', '.podx/codegraph_ignore', '.podx/skill_runs.yml', '.podx/skill_snapshot.md', '.podx/skill_ci.json', '.podx/rules_snapshot.json', '.podx/pipeline_ci.sh', '.podx/pipeline_snapshot.json', '.podx/pipeline_report.md'], missing
   end
 
   def test_podx_rules_check_fails_when_gitignore_is_missing_rules
@@ -5366,6 +5551,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes payload['missing_gitignore_rules'], 'Development Pods/'
     assert payload['summaries'].any? { |row| row['rule'] == '本地产物' }
     assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/skills.yml' }
+    assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/codegraph_ignore' }
+    assert payload['local_artifacts'].any? { |row| row['rule'] == '.code-review-graphignore' }
     assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/rules_snapshot.json' }
     assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/pipeline_ci.sh' }
     assert payload['local_artifacts'].any? { |row| row['rule'] == '.podx/pipeline_snapshot.json' }

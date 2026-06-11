@@ -325,6 +325,71 @@ load_podx_git_token_from_keychain() {
   [ -z "$token" ] || export COCOAPODS_PODX_GIT_TOKEN="$token"
 }
 
+podx_gitlab_url() {
+  if [ -n "${COCOAPODS_PODX_GITLAB_URL:-}" ]; then
+    echo "$COCOAPODS_PODX_GITLAB_URL"
+    return 0
+  fi
+
+  config_path="podx.config.yml"
+  if [ -f "$config_path" ]; then
+    parsed="$(ruby -ryaml -e 'config = YAML.load_file(ARGV[0]) || {}; puts config["git_base_url"].to_s' "$config_path" 2>/dev/null || true)"
+    if [ -n "$parsed" ]; then
+      echo "$parsed"
+      return 0
+    fi
+  fi
+
+  echo "http://git.leigod.top"
+}
+
+print_podx_git_token_setup_guide() {
+  gitlab_url="$(podx_gitlab_url)"
+  cat <<GUIDE
+设置token:
+1、请访问 ${gitlab_url%/}/profile/personal_access_tokens
+2、若没有Access Token，先创建Access Token，Scopes 只勾选 api
+3、获取git平台的Access Token，使用 podx git-token set 命令设置
+GUIDE
+}
+
+podx_git_token_validate() {
+  token="$1"
+  gitlab_url="$(podx_gitlab_url)"
+  PODX_GIT_TOKEN_TO_VALIDATE="$token" PODX_GITLAB_URL="$gitlab_url" ruby <<'RUBY'
+require "net/http"
+require "uri"
+
+begin
+token = ENV.fetch("PODX_GIT_TOKEN_TO_VALIDATE").to_s
+base_url = ENV.fetch("PODX_GITLAB_URL").to_s.sub(%r{/+\z}, "")
+uri = URI("#{base_url}/api/v4/user")
+request = Net::HTTP::Get.new(uri)
+request["PRIVATE-TOKEN"] = token
+response = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https", open_timeout: 5, read_timeout: 10) do |http|
+  http.request(request)
+end
+
+case response.code.to_i
+when 200
+  exit 0
+when 401
+  warn "GitLab Token 无效或已过期，请重新执行：podx git-token set YOUR_GITLAB_TOKEN"
+  exit 2
+when 403
+  warn "GitLab Token 权限不足，请确认 token 勾选 api。"
+  exit 3
+else
+  warn "GitLab Token 校验失败：HTTP #{response.code}"
+  exit 4
+end
+rescue => e
+  warn "GitLab Token 校验失败：#{e.class}: #{e.message}"
+  exit 4
+end
+RUBY
+}
+
 podx_git_token_command() {
   command="$1"
   shift || true
@@ -332,17 +397,25 @@ podx_git_token_command() {
 
   case "$command" in
     status)
+      source=""
       if [ -n "${COCOAPODS_PODX_GIT_TOKEN:-}" ]; then
-        echo "COCOAPODS_PODX_GIT_TOKEN [env] 已配置"
-        return 0
+        token="$COCOAPODS_PODX_GIT_TOKEN"
+        source="env"
+      elif command -v security >/dev/null 2>&1; then
+        token="$(security find-generic-password -a "${USER:-$LOGNAME}" -s "$(podx_git_token_service)" -w 2>/dev/null || true)"
+        [ -z "$token" ] || source="keychain"
       fi
-      if command -v security >/dev/null 2>&1 &&
-         security find-generic-password -a "${USER:-$LOGNAME}" -s "$(podx_git_token_service)" -w >/dev/null 2>&1; then
-        echo "COCOAPODS_PODX_GIT_TOKEN [keychain] 已配置"
-        return 0
+      if [ -n "$token" ]; then
+        podx_git_token_validate "$token"
+        validation_status=$?
+        if [ "$validation_status" -eq 0 ]; then
+          echo "COCOAPODS_PODX_GIT_TOKEN [$source] 有效"
+          return 0
+        fi
+        return "$validation_status"
       fi
       echo "COCOAPODS_PODX_GIT_TOKEN [missing] 未配置"
-      echo "用法：podx git-token set YOUR_GITLAB_TOKEN"
+      print_podx_git_token_setup_guide
       return 1
       ;;
     set)
@@ -598,6 +671,23 @@ cleanup_overlay_pods_dir() {
   }
 }
 
+sync_graph_after_pod_install() {
+  [ "${COCOAPODS_PODX_SKIP_GRAPH_SYNC:-0}" = "1" ] && return 0
+
+  graph_script=""
+  if [ -f ".claude/mcps/update-codegraph.sh" ]; then
+    graph_script=".claude/mcps/update-codegraph.sh"
+  elif [ -f ".claude/mcp/update-codegraph.sh" ]; then
+    graph_script=".claude/mcp/update-codegraph.sh"
+  fi
+
+  [ -n "$graph_script" ] || return 0
+
+  (
+    COCOAPODS_PODX_NO_PROGRESS=1 /bin/sh "$graph_script" >/dev/null 2>&1
+  ) >/dev/null 2>&1 &
+}
+
 run_pod_update_for_remote_updates() {
   updates_file="$1"
   shift
@@ -648,6 +738,7 @@ run_pod_install_with_auto_fix() {
       fi
     fi
     restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"
+    sync_graph_after_pod_install
     echo "【podx install】完成"
     rm -f "$log_file" "$remote_updates_file"
     rm -rf "$pbxproj_snapshot_dir"
@@ -678,6 +769,7 @@ run_pod_install_with_auto_fix() {
         return "$retry_status"
       fi
       restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"
+      sync_graph_after_pod_install
       echo "【podx install】完成"
       rm -f "$log_file" "$retry_log_file" "$remote_updates_file"
       rm -rf "$pbxproj_snapshot_dir"

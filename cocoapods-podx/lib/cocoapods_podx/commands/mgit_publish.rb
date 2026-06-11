@@ -9,6 +9,7 @@ module CocoapodsPodx
   module Commands
     module MgitPublish
       def publish_git_branches
+        publish_started_at = Time.now
         target_branch = @pod_names.first.to_s.strip
         raise Pod::Informative, '请指定目标分支，例如：mgit publish release/5.14.2' if target_branch.empty?
         validate_mgit_publish_target_branch!(target_branch)
@@ -35,24 +36,13 @@ module CocoapodsPodx
 
         release_version = mgit_publish_release_version(target_branch)
         release_build = release_version && mgit_publish_build_number(release_version)
-        mgit_publish_print_table(
-          'mgit publish 配置',
-          [
-            ['目标分支', target_branch],
-            ['基准分支', base_branch],
-            ['工作目录', work_dir],
-            ['推送模式', push_mode],
-            ['版本号', release_version ? "#{release_version} build #{release_build}" : '-'],
-            ['主仓库', mgit_publish_main_repo? ? publish_config[:main_repo] : '-'],
-          ],
-          headers: ['配置', '值']
-        )
 
         failures = []
         done_count = 0
         publish_rows = []
 
         FileUtils.mkdir_p(work_dir) unless @dry_run
+        Pod::UI.puts @dry_run ? "mgit publish #{target_branch} 预览中..." : "mgit publish #{target_branch} 执行中..."
 
         repos.each do |repo|
           name = repo[:name]
@@ -131,17 +121,24 @@ module CocoapodsPodx
 
         mgit_publish_cleanup_work_dir(work_dir) unless @dry_run
 
-        checkout_rows = []
-        checkout_rows << mgit_publish_checkout_project_repo(target_branch)
-        checkout_rows.concat(mgit_publish_sync_local_repos(target_branch))
-        checkout_rows.compact!
-        mgit_publish_print_table(
-          @dry_run ? '本地仓库切换预览' : '本地仓库切换',
-          checkout_rows,
-          headers: ['仓库', '原分支', '目标分支', '结果']
-        ) if checkout_rows.any?
+        unless @dry_run
+          checkout_rows = []
+          checkout_rows << mgit_publish_checkout_project_repo(target_branch)
+          checkout_rows.concat(mgit_publish_sync_local_repos(target_branch))
+          checkout_rows.compact!
+        end
 
-        Pod::UI.puts @dry_run ? "mgit publish [dry-run] #{done_count}" : "mgit publish [done] #{done_count}"
+        Pod::UI.puts @dry_run ? "mgit publish #{target_branch} 预览完成 #{done_count}" : "mgit publish #{target_branch} 执行完成 #{done_count}"
+        Pod::UI.puts "【publish 耗时】#{mgit_publish_format_duration(Time.now - publish_started_at)}"
+      end
+
+      def mgit_publish_format_duration(seconds)
+        total_seconds = [seconds.to_f.round, 0].max
+        minutes = total_seconds / 60
+        remaining_seconds = total_seconds % 60
+        return "#{remaining_seconds}s" if minutes.zero?
+
+        "#{minutes}m#{remaining_seconds.to_s.rjust(2, '0')}s"
       end
 
       def mgit_publish_cleanup_work_dir(work_dir)
@@ -203,6 +200,14 @@ module CocoapodsPodx
         return true if response.is_a?(Net::HTTPSuccess)
 
         body = response.body.to_s
+        if response.code.to_i == 401
+          return false
+        end
+
+        if response.code.to_i == 403
+          return false
+        end
+
         if response.code.to_i == 400 && body.match?(/Branch already exists|already exists/i)
           raise "远端发布分支已存在：#{target_branch}"
         end

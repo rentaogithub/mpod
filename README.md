@@ -7,7 +7,7 @@
 - `podx`：团队 DevOps 技能入口，覆盖依赖安装、overlay 本地/远端切换、工程诊断、打开工程、发布触发和 AI 工程上下文。
 - `podx skill`：团队技能运行时，沉淀依赖巡检、发布检查、失败诊断、半自动修复等高频流程。
 - `mgit`：多仓库 Git 入口，覆盖 branch、status、diff、log、add、pull、push、commit、checkout、stash、publish。
-- `podx ai`：生成 Claude Code 项目结构，接入 CodeGraph / Code Review Graph，沉淀 rules、skills、agents、commands、mcps。
+- `podx ai`：生成 Claude Code 项目结构，接入 Codex CodeGraph MCP，沉淀 rules、skills、agents、commands、mcps。
 - 安装脚本：安装、卸载、发布 gem，并生成 `podx` / `mgit` 命令。
 
 Hermes Agent 与 iOS DevOps 的组合方案见 [HERMES_IOS_DEVOPS.md](HERMES_IOS_DEVOPS.md)。
