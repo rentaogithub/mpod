@@ -126,20 +126,49 @@ detect_cocoapods_ruby() {
   command -v ruby
 }
 
+podx_spec_value() {
+  query="$1"
+  local_gem_home="${gem_home:-$(detect_cocoapods_gem_home)}"
+  PODX_SPEC_QUERY="$query" PODX_GEM_HOME="$local_gem_home" ruby -e '
+require "rubygems"
+
+entries = []
+Gem::Specification.find_all_by_name("cocoapods-podx").each do |spec|
+  entries << [spec.version.to_s, spec.full_gem_path]
+end
+
+gem_home = ENV["PODX_GEM_HOME"].to_s
+unless gem_home.empty?
+  begin
+    Gem::Specification.dirs = [gem_home]
+    Gem::Specification.reset
+    Gem::Specification.find_all_by_name("cocoapods-podx").each do |spec|
+      entries << [spec.version.to_s, spec.full_gem_path]
+    end
+  rescue
+  end
+end
+
+entry = entries.uniq.max_by { |version, _path| Gem::Version.new(version) }
+exit 0 unless entry
+
+if ENV["PODX_SPEC_QUERY"] == "lib"
+  puts File.join(entry[1], "lib")
+else
+  puts entry[0]
+end
+' 2>/dev/null
+}
+
 detect_podx_lib_path() {
   if [ -n "$COCOAPODS_PODX_LOCAL_LIB" ] && [ -d "$COCOAPODS_PODX_LOCAL_LIB" ]; then
     echo "$COCOAPODS_PODX_LOCAL_LIB"
     return 0
   fi
 
-  podx_lib="$(ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null)"
+  podx_lib="$(podx_spec_value lib)"
   if [ -n "$podx_lib" ]; then
     echo "$podx_lib"
-    return 0
-  fi
-
-  if [ -n "$gem_home" ]; then
-    GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? File.join(spec.full_gem_path, "lib") : ""' 2>/dev/null
   fi
 }
 
@@ -242,7 +271,7 @@ upgrade_cocoapods_podx() {
   GEM_PATH="$gem_home" \
   gem install --local --ignore-dependencies --force --no-document "$gem_file"
 
-  installed_dir="$(GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_by_name("cocoapods-podx"); puts spec.full_gem_path')"
+  installed_dir="$(GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec.full_gem_path')"
   command_dir="${COCOAPODS_PODX_COMMAND_DIR:-$(dirname "$0")}"
   if [ -w "$command_dir" ]; then
     install_upgrade_shim "$installed_dir/bin/podx" "$command_dir/podx"
@@ -285,15 +314,9 @@ install_upgrade_shim() {
 }
 
 current_podx_version() {
-  version="$(ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? spec.version : ""' 2>/dev/null)"
+  version="$(podx_spec_value version)"
   if [ -n "$version" ]; then
     echo "$version"
-    return 0
-  fi
-
-  gem_home="$(detect_cocoapods_gem_home)"
-  if [ -n "$gem_home" ]; then
-    GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec ? spec.version : ""' 2>/dev/null
   fi
 }
 
@@ -931,7 +954,8 @@ case "$1" in
     ;;
   version|--version|-v)
     detect_podx_lib_and_gem_env
-    ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts "cocoapods-podx #{spec ? spec.version : "unknown"}"'
+    version="$(current_podx_version)"
+    echo "cocoapods-podx ${version:-unknown}"
     ;;
   upgrade)
     exec_upgrade_from_temp_shim "$(current_podx_version)" "$2"
