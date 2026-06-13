@@ -6100,6 +6100,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_equal 'LoginLogic.swift', helper.git_changed_file_summary([' M NNIM/Src/Main/Auth/Logics/LoginLogic.swift'])
     assert_equal 'NewName.swift', helper.git_changed_file_summary(['R  Old/OldName.swift -> New/Path/NewName.swift'])
+    assert_equal '未推送 1', helper.git_status_local_change_summary([], 1)
+    assert_equal 'LoginLogic.swift; 未推送 2', helper.git_status_local_change_summary([' M NNIM/Src/Main/Auth/Logics/LoginLogic.swift'], 2)
 
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
@@ -6110,7 +6112,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         [
           helper.git_status_table_row(['main', 'feature/5.14.2_broadcast', 'changed', 'LoginLogic.swift', '/tmp/main', 'bd5ad0', '有更新']),
           helper.git_status_table_row(['NNBussCom', 'feature/5.14.2_broadcast', 'changed', 'NNVoiceRoomViewController.swift', '/tmp/nnbusscom', '258c70', '-']),
-          helper.git_status_table_row(['NNApperance', 'feature/5.14.2_broadcast', 'clean', '-', '/tmp/nnapperance', '96bc4c', '-'])
+          helper.git_status_table_row(['NNApperance', 'feature/5.14.2_broadcast', 'clean', '-', '/tmp/nnapperance', '96bc4c', '-']),
+          helper.git_status_table_row(['NNBasciCommon', 'feature/5.14.2_broadcast', 'changed', '未推送 1', '/tmp/nnbascicommon', '982553', '-'])
         ]
       )
     end
@@ -6123,6 +6126,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes output, 'NNVoiceRoomViewController.swift'
     assert_includes output, 'bd5ad0'
     assert_includes output, '有更新'
+    assert_includes output, '未推送 1'
 
     table_lines = output.lines.map(&:chomp).select { |line| line.start_with?('|', '+') }
     widths = table_lines.map { |line| helper.git_action_display_width(line) }

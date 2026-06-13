@@ -50,11 +50,12 @@ module CocoapodsPodx
             when 'status'
               commit = git_short_head(path)
               update = snapshot[:update]
-              if status.empty?
+              ahead_count = snapshot[:ahead_count].to_i
+              if status.empty? && ahead_count.zero?
                 rows << [name, branch || 'detached', 'clean', '-', path, commit, update]
                 skipped_count += 1
               else
-                rows << [name, branch || 'detached', 'changed', git_changed_file_summary(status), path, commit, update]
+                rows << [name, branch || 'detached', 'changed', git_status_local_change_summary(status, ahead_count), path, commit, update]
                 done_count += 1
               end
             when 'diff'
@@ -810,6 +811,14 @@ module CocoapodsPodx
       def git_changed_file_summary(status_lines, max_width = 50)
         files = Array(status_lines).map { |line| git_status_file_name(line) }.reject(&:empty?).uniq
         git_action_summary(files, max_width)
+      end
+
+      def git_status_local_change_summary(status_lines, ahead_count, max_width = 50)
+        parts = []
+        files = git_changed_file_summary(status_lines, max_width)
+        parts << files unless files == '-'
+        parts << "未推送 #{ahead_count}" if ahead_count.to_i.positive?
+        git_action_summary(parts, max_width)
       end
 
       def git_status_file_name(line)
