@@ -3818,6 +3818,98 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal '501410', publisher.mgit_publish_build_number('5.14.10')
   end
 
+  def test_mgit_publish_commits_version_to_base_branch_before_release_branch
+    project_dir = Dir.mktmpdir('cocoapods-podx-mgit-publish-version-base')
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+
+      attr_reader :commands
+
+      def initialize(project_dir)
+        @project_dir = project_dir
+        @pod_names = ['release/5.14.8']
+        @dry_run = false
+        @git_publish_base_branch = nil
+        @git_publish_push_mode = nil
+        @git_publish_work_dir = nil
+        @commands = []
+      end
+
+      def project_directory
+        @project_dir
+      end
+
+      def mgit_publish_config
+        {
+          work_dir: '.mgit-publish',
+          base_branch: 'develop',
+          repos: nil,
+          main_repo: 'nnios',
+          update_podfile_branch: true,
+        }
+      end
+
+      def mgit_publish_repos
+        [{ name: 'nnios', url: 'http://git.example.com/nn_ios/nnios.git' }]
+      end
+
+      def mgit_publish_version_config
+        {
+          type: 'ios_xcodeproj',
+          branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$',
+          project_file: 'NNIM.xcodeproj/project.pbxproj',
+          build_number_strategy: 'ios_semver',
+        }
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        if args.first == 'clone'
+          repo_dir = args.last
+          FileUtils.mkdir_p(File.join(repo_dir, 'NNIM.xcodeproj'))
+          File.write(File.join(repo_dir, 'Podfile'), "pod 'NNLibrary', :branch => 'develop'\n")
+          File.write(File.join(repo_dir, 'NNIM.xcodeproj', 'project.pbxproj'), <<~PROJECT)
+            MARKETING_VERSION = 5.14.7;
+            CURRENT_PROJECT_VERSION = 501407;
+          PROJECT
+        end
+        ''
+      end
+
+      def checkout_branch!(repo_dir, branch)
+        @commands << [repo_dir, ['checkout_branch!', branch]]
+      end
+
+      def git_dirty?(_repo_dir)
+        true
+      end
+
+      def git_work_tree?(_repo_dir)
+        false
+      end
+    end.new(project_dir)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |_message = ''| }
+    publisher.publish_git_branches
+
+    command_args = publisher.commands.map(&:last)
+    base_push_index = command_args.index(['push', 'origin', 'develop'])
+    release_checkout_index = command_args.index(['checkout', '-B', 'release/5.14.8', 'develop'])
+    release_push_index = command_args.index(['push', 'origin', 'release/5.14.8'])
+
+    refute_nil base_push_index
+    refute_nil release_checkout_index
+    refute_nil release_push_index
+    assert_operator base_push_index, :<, release_checkout_index
+    assert_operator release_checkout_index, :<, release_push_index
+    assert_includes command_args, ['commit', '-m', 'chore: update version to 5.14.8(501408) for develop']
+    assert_includes command_args, ['commit', '-m', 'chore: update publish config to release/5.14.8']
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
   def test_mgit_publish_rejects_placeholder_release_branch
     publisher = Class.new do
       include CocoapodsPodx::Commands::MgitPublish

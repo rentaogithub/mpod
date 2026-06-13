@@ -82,9 +82,16 @@ module CocoapodsPodx
 
             checkout_branch!(repo_dir, base_branch)
 
+            base_changed_files = mgit_publish_update_base_project(repo_dir, base_branch, release_version, release_build)
+            if base_changed_files.any? && push_mode != 'skip'
+              run_git!(repo_dir, 'push', 'origin', base_branch)
+            end
+
             run_git!(repo_dir, 'checkout', '-B', target_branch, base_branch)
 
-            changed_files = mgit_publish_main_repo?(name) ? mgit_publish_update_main_project(repo_dir, target_branch, release_version, release_build) : []
+            target_changed_files = mgit_publish_main_repo?(name) ? mgit_publish_update_main_project(repo_dir, target_branch) : []
+            changed_files = base_changed_files.map { |file| "#{base_branch}:#{file}" } +
+                            target_changed_files.map { |file| "#{target_branch}:#{file}" }
 
             case push_mode
             when 'normal'
@@ -331,9 +338,8 @@ module CocoapodsPodx
         [name, from_branch, target_branch, 'ok']
       end
 
-      def mgit_publish_update_main_project(repo_dir, target_branch, release_version, release_build)
+      def mgit_publish_update_base_project(repo_dir, base_branch, release_version, release_build)
         changed_files = []
-        changed_files << 'Podfile' if mgit_publish_update_podfile_branch_enabled? && mgit_publish_update_podfile_branch(repo_dir, target_branch)
         project_file = mgit_publish_version_config[:project_file]
         if mgit_publish_version_update_enabled? && release_version && mgit_publish_update_project_version(repo_dir, release_version, release_build)
           changed_files << project_file
@@ -341,8 +347,22 @@ module CocoapodsPodx
         return [] if changed_files.empty? || !git_dirty?(repo_dir)
 
         run_git!(repo_dir, 'add', *changed_files)
+        message = "chore: update version to #{release_version}"
+        message += "(#{release_build})" if release_build
+        message += " for #{base_branch}"
+        with_mgit_publish_protected_commit_allowed do
+          run_git!(repo_dir, 'commit', '-m', message)
+        end
+        changed_files
+      end
+
+      def mgit_publish_update_main_project(repo_dir, target_branch)
+        changed_files = []
+        changed_files << 'Podfile' if mgit_publish_update_podfile_branch_enabled? && mgit_publish_update_podfile_branch(repo_dir, target_branch)
+        return [] if changed_files.empty? || !git_dirty?(repo_dir)
+
+        run_git!(repo_dir, 'add', *changed_files)
         message = "chore: update publish config to #{target_branch}"
-        message += " #{release_version}(#{release_build})" if release_version
         with_mgit_publish_protected_commit_allowed do
           run_git!(repo_dir, 'commit', '-m', message)
         end
