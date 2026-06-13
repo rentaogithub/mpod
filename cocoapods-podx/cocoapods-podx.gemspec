@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = 'cocoapods-podx'
-  spec.version       = "0.0.76"
+  spec.version       = "0.0.77"
   spec.summary       = 'Podx workflow helpers for private CocoaPods components'
   spec.description   = 'Adds podx and mgit helpers to switch private CocoaPods components between local and remote sources.'
   spec.authors       = ['Codex']

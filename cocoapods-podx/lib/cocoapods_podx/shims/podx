@@ -119,7 +119,7 @@ detect_cocoapods_gem_home() {
     fi
   fi
 
-  ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec ? File.expand_path("..", spec.full_gem_path) : ""' 2>/dev/null
+  ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec ? spec.base_dir : ""' 2>/dev/null
 }
 
 detect_cocoapods_ruby() {
