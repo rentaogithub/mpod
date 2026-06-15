@@ -5444,14 +5444,25 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     main_hook = File.read(File.join(main_path, '.githooks', 'pre-commit'))
+    main_pre_merge_commit_hook = File.read(File.join(main_path, '.githooks', 'pre-merge-commit'))
+    main_post_commit_hook = File.read(File.join(main_path, '.githooks', 'post-commit'))
     main_post_merge_hook = File.read(File.join(main_path, '.githooks', 'post-merge'))
+    main_pre_push_hook = File.read(File.join(main_path, '.githooks', 'pre-push'))
     assert_includes main_hook, 'cocoapods-podx protected files hook'
-    assert_includes main_hook, "'Podfile'"
+    assert_includes main_hook, 'protected_files="Podfile"'
     assert_includes main_hook, 'COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT'
     assert_includes main_hook, 'mgit_publish'
+    assert_includes main_pre_merge_commit_hook, 'cocoapods-podx protected files hook'
+    assert_includes main_pre_merge_commit_hook, 'protected_files="Podfile"'
+    assert_includes main_post_commit_hook, 'cocoapods-podx protected files post-commit hook'
+    assert_includes main_post_commit_hook, 'CHERRY_PICK_HEAD'
+    assert_includes main_post_commit_hook, 'git reset --soft HEAD^'
     assert_includes main_post_merge_hook, 'cocoapods-podx protected files post-merge hook'
     assert_includes main_post_merge_hook, 'git checkout ORIG_HEAD -- "$protected_file"'
     assert_includes main_post_merge_hook, 'pull/merge 后已还原'
+    assert_includes main_pre_push_hook, 'cocoapods-podx protected files pre-push hook'
+    assert_includes main_pre_push_hook, 'git diff --name-only "$remote_sha" "$local_sha"'
+    assert_includes main_pre_push_hook, '不允许推送包含 $changed_file 修改的提交'
     refute_includes main_hook, "'Podflie.rb'"
     assert_includes output, '【hooks 结果】'
     assert_includes output, '【hooks 规则】'
@@ -5462,7 +5473,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     refute_includes output, 'NNBussCom'
     assert_includes helper.commands, [main_path, ['config', 'core.hooksPath', '.githooks']]
     refute File.exist?(File.join(component_path, '.githooks', 'pre-commit'))
+    refute File.exist?(File.join(component_path, '.githooks', 'pre-merge-commit'))
+    refute File.exist?(File.join(component_path, '.githooks', 'post-commit'))
     refute File.exist?(File.join(component_path, '.githooks', 'post-merge'))
+    refute File.exist?(File.join(component_path, '.githooks', 'pre-push'))
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir
@@ -5484,7 +5498,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     updated = helper.upsert_podx_hook(original, %w[Podfile])
 
     assert_includes updated, 'echo before'
-    assert_includes updated, "'Podfile'"
+    assert_includes updated, 'protected_files="Podfile"'
     refute_includes updated, "\nold\n"
     assert_equal 1, updated.scan('cocoapods-podx protected files hook').length / 2
   end
@@ -5505,10 +5519,55 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     updated = helper.upsert_podx_post_merge_hook(original, %w[Podfile])
 
     assert_includes updated, 'echo before'
-    assert_includes updated, "'Podfile'"
+    assert_includes updated, 'protected_files="Podfile"'
     assert_includes updated, 'git checkout ORIG_HEAD -- "$protected_file"'
     refute_includes updated, "\nold\n"
     assert_equal 1, updated.scan('cocoapods-podx protected files post-merge hook').length / 2
+  end
+
+  def test_git_hooks_upsert_replaces_existing_pre_push_block
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitHooks
+    end.new
+
+    original = <<~SH
+      #!/bin/sh
+      echo before
+
+      # >>> cocoapods-podx protected files pre-push hook
+      old
+      # <<< cocoapods-podx protected files pre-push hook
+    SH
+    updated = helper.upsert_podx_pre_push_hook(original, %w[Podfile])
+
+    assert_includes updated, 'echo before'
+    assert_includes updated, 'protected_files="Podfile"'
+    assert_includes updated, 'git diff --name-only "$remote_sha" "$local_sha"'
+    refute_includes updated, "\nold\n"
+    assert_equal 1, updated.scan('cocoapods-podx protected files pre-push hook').length / 2
+  end
+
+  def test_git_hooks_upsert_replaces_existing_post_commit_block
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitHooks
+    end.new
+
+    original = <<~SH
+      #!/bin/sh
+      echo before
+
+      # >>> cocoapods-podx protected files post-commit hook
+      old
+      # <<< cocoapods-podx protected files post-commit hook
+    SH
+    updated = helper.upsert_podx_post_commit_hook(original, %w[Podfile])
+
+    assert_includes updated, 'echo before'
+    assert_includes updated, 'protected_files="Podfile"'
+    assert_includes updated, 'CHERRY_PICK_HEAD'
+    assert_includes updated, 'git reset --soft HEAD^'
+    refute_includes updated, "\nold\n"
+    assert_equal 1, updated.scan('cocoapods-podx protected files post-commit hook').length / 2
   end
 
   def test_git_hooks_default_protected_files_are_used_without_config
@@ -5570,7 +5629,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     rows = CocoapodsPodx::Rules.engine(config_path: config_path).summaries
 
     assert_includes rows, ['发布分支', '配置', 'develop->release/x.x.x', 'mgit publish']
-    assert_includes rows, ['合并保护', '默认', '还原Podfile', 'pull/merge']
+    assert_includes rows, ['合并保护', '默认', '还原Podfile', 'pull/merge/cherry-pick']
     assert_includes rows, ['本地产物', '默认', '.mgit-publish/, Development Pods/, .codegraphignore, .code-review-graphignore, .podx/skills.yml, .podx/codegraph_ignore, .podx/skill_runs.yml, .podx/skill_snapshot.md, .podx/skill_ci.json, .podx/rules_snapshot.json, .podx/pipeline_ci.sh, .podx/pipeline_snapshot.json, .podx/pipeline_report.md', '.gitignore']
     assert_includes rows, ['Podfile分支', '配置', '组件branch->发布分支', 'mgit publish']
     assert_includes rows, ['iOS版本', '配置', '改Version/Build', 'mgit publish']

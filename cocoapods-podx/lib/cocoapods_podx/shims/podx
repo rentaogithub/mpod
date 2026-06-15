@@ -919,7 +919,7 @@ pod 扩展命令:
   podx git-token set               # 保存 GitLab API Token 到 macOS Keychain
   podx git-token clear             # 清除 Keychain 中的 GitLab API Token
   podx ai init                     # 初始化 AI 辅助配置
-  podx hooks install               # 安装版本化提交保护 hook
+  podx hooks install               # 安装版本化 Git 保护 hook
   podx version                     # 查看版本
   podx upgrade [VERSION]           # 升级 cocoapods-podx
   podx list                        # 查看组件状态

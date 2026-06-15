@@ -52,6 +52,10 @@ module CocoapodsPodx
       HOOK_MARKER_END = '# <<< cocoapods-podx protected files hook'.freeze
       POST_MERGE_HOOK_MARKER_BEGIN = '# >>> cocoapods-podx protected files post-merge hook'.freeze
       POST_MERGE_HOOK_MARKER_END = '# <<< cocoapods-podx protected files post-merge hook'.freeze
+      PRE_PUSH_HOOK_MARKER_BEGIN = '# >>> cocoapods-podx protected files pre-push hook'.freeze
+      PRE_PUSH_HOOK_MARKER_END = '# <<< cocoapods-podx protected files pre-push hook'.freeze
+      POST_COMMIT_HOOK_MARKER_BEGIN = '# >>> cocoapods-podx protected files post-commit hook'.freeze
+      POST_COMMIT_HOOK_MARKER_END = '# <<< cocoapods-podx protected files post-commit hook'.freeze
 
       attr_reader :config
 
@@ -104,6 +108,22 @@ module CocoapodsPodx
 
       def post_merge_hook_marker_end
         POST_MERGE_HOOK_MARKER_END
+      end
+
+      def pre_push_hook_marker_begin
+        PRE_PUSH_HOOK_MARKER_BEGIN
+      end
+
+      def pre_push_hook_marker_end
+        PRE_PUSH_HOOK_MARKER_END
+      end
+
+      def post_commit_hook_marker_begin
+        POST_COMMIT_HOOK_MARKER_BEGIN
+      end
+
+      def post_commit_hook_marker_end
+        POST_COMMIT_HOOK_MARKER_END
       end
     end
 
@@ -191,7 +211,7 @@ module CocoapodsPodx
           '合并保护',
           rule.protected_files_source,
           "还原#{rule.protected_files.join(', ')}",
-          'pull/merge'
+          'pull/merge/cherry-pick'
         ]
       end
 

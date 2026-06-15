@@ -198,7 +198,10 @@ module CocoapodsPodx
 
       def install_protected_file_hooks(path, files)
         install_pre_commit_hook(path, files)
+        install_pre_merge_commit_hook(path, files)
+        install_post_commit_hook(path, files)
         install_post_merge_hook(path, files)
+        install_pre_push_hook(path, files)
         configure_git_hooks_path(path)
       end
 
@@ -212,12 +215,42 @@ module CocoapodsPodx
         FileUtils.chmod('+x', hook_path)
       end
 
+      def install_pre_merge_commit_hook(path, files)
+        hooks_dir = versioned_hooks_dir(path)
+        FileUtils.mkdir_p(hooks_dir)
+        hook_path = File.join(hooks_dir, 'pre-merge-commit')
+        existing = existing_hook_content(path, hook_path, 'pre-merge-commit')
+        updated = upsert_podx_hook(existing, files)
+        File.write(hook_path, updated)
+        FileUtils.chmod('+x', hook_path)
+      end
+
+      def install_post_commit_hook(path, files)
+        hooks_dir = versioned_hooks_dir(path)
+        FileUtils.mkdir_p(hooks_dir)
+        hook_path = File.join(hooks_dir, 'post-commit')
+        existing = existing_hook_content(path, hook_path, 'post-commit')
+        updated = upsert_podx_post_commit_hook(existing, files)
+        File.write(hook_path, updated)
+        FileUtils.chmod('+x', hook_path)
+      end
+
       def install_post_merge_hook(path, files)
         hooks_dir = versioned_hooks_dir(path)
         FileUtils.mkdir_p(hooks_dir)
         hook_path = File.join(hooks_dir, 'post-merge')
         existing = existing_hook_content(path, hook_path, 'post-merge')
         updated = upsert_podx_post_merge_hook(existing, files)
+        File.write(hook_path, updated)
+        FileUtils.chmod('+x', hook_path)
+      end
+
+      def install_pre_push_hook(path, files)
+        hooks_dir = versioned_hooks_dir(path)
+        FileUtils.mkdir_p(hooks_dir)
+        hook_path = File.join(hooks_dir, 'pre-push')
+        existing = existing_hook_content(path, hook_path, 'pre-push')
+        updated = upsert_podx_pre_push_hook(existing, files)
         File.write(hook_path, updated)
         FileUtils.chmod('+x', hook_path)
       end
@@ -266,8 +299,36 @@ module CocoapodsPodx
         end
       end
 
+      def upsert_podx_pre_push_hook(content, files)
+        base = content.to_s.empty? ? "#!/bin/sh\n" : content.to_s
+        base = "#!/bin/sh\n#{base}" unless base.start_with?('#!')
+        block = podx_pre_push_hook_block(files)
+        rule = commit_protection_rule
+
+        pattern = /#{Regexp.escape(rule.pre_push_hook_marker_begin)}.*?#{Regexp.escape(rule.pre_push_hook_marker_end)}\n?/m
+        if base.match?(pattern)
+          base.sub(pattern, block)
+        else
+          "#{base.chomp}\n\n#{block}"
+        end
+      end
+
+      def upsert_podx_post_commit_hook(content, files)
+        base = content.to_s.empty? ? "#!/bin/sh\n" : content.to_s
+        base = "#!/bin/sh\n#{base}" unless base.start_with?('#!')
+        block = podx_post_commit_hook_block(files)
+        rule = commit_protection_rule
+
+        pattern = /#{Regexp.escape(rule.post_commit_hook_marker_begin)}.*?#{Regexp.escape(rule.post_commit_hook_marker_end)}\n?/m
+        if base.match?(pattern)
+          base.sub(pattern, block)
+        else
+          "#{base.chomp}\n\n#{block}"
+        end
+      end
+
       def podx_pre_commit_hook_block(files)
-        quoted_files = files.map { |file| file.gsub("'", %q('"'"')) }.map { |file| "'#{file}'" }.join(' ')
+        quoted_files = protected_files_shell_words(files)
         rule = commit_protection_rule
         <<~SH
           #{rule.hook_marker_begin}
@@ -293,7 +354,7 @@ module CocoapodsPodx
       end
 
       def podx_post_merge_hook_block(files)
-        quoted_files = files.map { |file| file.gsub("'", %q('"'"')) }.map { |file| "'#{file}'" }.join(' ')
+        quoted_files = protected_files_shell_words(files)
         rule = commit_protection_rule
         <<~SH
           #{rule.post_merge_hook_marker_begin}
@@ -322,6 +383,92 @@ module CocoapodsPodx
           done
           #{rule.post_merge_hook_marker_end}
         SH
+      end
+
+      def podx_pre_push_hook_block(files)
+        quoted_files = protected_files_shell_words(files)
+        rule = commit_protection_rule
+        <<~SH
+          #{rule.pre_push_hook_marker_begin}
+          if [ "$#{rule.allow_env}" = "#{rule.allow_context}" ]; then
+            exit 0
+          fi
+
+          protected_files="#{quoted_files}"
+          zero_sha="0000000000000000000000000000000000000000"
+
+          while read local_ref local_sha remote_ref remote_sha; do
+            [ -n "$local_sha" ] || continue
+            [ "$local_sha" != "$zero_sha" ] || continue
+            [ "$remote_sha" != "$zero_sha" ] || continue
+
+            changed_files="$(git diff --name-only "$remote_sha" "$local_sha" -- 2>/dev/null)"
+            for changed_file in $changed_files; do
+              changed_basename="$(basename "$changed_file")"
+              for protected_file in $protected_files; do
+                if [ "$changed_basename" = "$protected_file" ]; then
+                  echo "[拒绝推送] 不允许推送包含 $changed_file 修改的提交"
+                  echo "只有 mgit publish 或 mgit commit -edit $protected_file 允许提交受保护文件。"
+                  exit 1
+                fi
+              done
+            done
+          done
+          #{rule.pre_push_hook_marker_end}
+        SH
+      end
+
+      def podx_post_commit_hook_block(files)
+        quoted_files = protected_files_shell_words(files)
+        rule = commit_protection_rule
+        <<~SH
+          #{rule.post_commit_hook_marker_begin}
+          if [ "$#{rule.allow_env}" = "#{rule.allow_context}" ]; then
+            exit 0
+          fi
+
+          cherry_pick_head="$(git rev-parse --git-path CHERRY_PICK_HEAD 2>/dev/null)"
+          if [ ! -f "$cherry_pick_head" ]; then
+            exit 0
+          fi
+
+          if ! git rev-parse -q --verify HEAD^ >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          protected_files="#{quoted_files}"
+          changed_files="$(git diff-tree --no-commit-id --name-only -r HEAD^ HEAD)"
+          matched_files=""
+
+          for changed_file in $changed_files; do
+            changed_basename="$(basename "$changed_file")"
+            for protected_file in $protected_files; do
+              if [ "$changed_basename" = "$protected_file" ]; then
+                matched_files="$matched_files $changed_file"
+              fi
+            done
+          done
+
+          [ -n "$matched_files" ] || exit 0
+
+          echo "[拒绝 cherry-pick] cherry-pick 提交包含受保护文件:$matched_files"
+          echo "已回退本次 cherry-pick 提交，并还原受保护文件。"
+
+          git reset --soft HEAD^
+          for protected_file in $protected_files; do
+            if git cat-file -e "HEAD:$protected_file" 2>/dev/null; then
+              git checkout HEAD -- "$protected_file"
+              git reset -q HEAD -- "$protected_file"
+            else
+              git rm -f --quiet -- "$protected_file" 2>/dev/null || rm -f "$protected_file"
+            fi
+          done
+          #{rule.post_commit_hook_marker_end}
+        SH
+      end
+
+      def protected_files_shell_words(files)
+        files.map(&:to_s).map { |file| file.gsub(/["\\$`]/) { |char| "\\#{char}" } }.join(' ')
       end
 
       def commit_protection_rule

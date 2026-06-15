@@ -82,24 +82,65 @@ generate_build_shims() {
 }
 
 install_command_shims() {
+  shim_dirs=""
   if [ "$PUBLISH_ONLY_MODE" = "1" ]; then
-    pod_dir="${COCOAPODS_PODX_BIN_DIR:-$HOME/.local/bin}"
-    mkdir -p "$pod_dir"
-    export PATH="$pod_dir:$PATH"
+    add_command_shim_dir "${COCOAPODS_PODX_BIN_DIR:-$HOME/.local/bin}" create
   else
-    pod_dir="$(dirname "$POD_BIN")"
+    add_command_shim_dir "$(dirname "$POD_BIN")"
   fi
 
-  if [ ! -w "$pod_dir" ]; then
-    echo "Warning: unable to write command shims into $pod_dir" >&2
-    return
+  add_command_shim_dir "$COCOAPODS_GEM_HOME/bin" create
+
+  current_podx="$(command -v podx 2>/dev/null || true)"
+  if [ -n "$current_podx" ]; then
+    add_command_shim_dir "$(dirname "$current_podx")"
   fi
 
-  write_podx_shim "$pod_dir/podx"
-  chmod +x "$pod_dir/podx"
-  write_mgit_shim "$pod_dir/mgit"
-  chmod +x "$pod_dir/mgit"
-  rm -f "$pod_dir/pox"
+  current_mgit="$(command -v mgit 2>/dev/null || true)"
+  if [ -n "$current_mgit" ]; then
+    add_command_shim_dir "$(dirname "$current_mgit")"
+  fi
+
+  add_command_shim_dir "${COCOAPODS_PODX_BIN_DIR:-$HOME/.local/bin}" create
+
+  installed_count=0
+  for pod_dir in $shim_dirs; do
+    if [ ! -w "$pod_dir" ]; then
+      echo "Warning: unable to write command shims into $pod_dir" >&2
+      continue
+    fi
+
+    write_podx_shim "$pod_dir/podx"
+    chmod +x "$pod_dir/podx"
+    write_mgit_shim "$pod_dir/mgit"
+    chmod +x "$pod_dir/mgit"
+    rm -f "$pod_dir/pox"
+    installed_count=$((installed_count + 1))
+  done
+
+  if [ "$installed_count" -eq 0 ]; then
+    echo "Warning: no writable command shim directory found" >&2
+  fi
+}
+
+add_command_shim_dir() {
+  candidate="$1"
+  create="${2:-}"
+  [ -n "$candidate" ] || return 0
+
+  if [ "$create" = "create" ]; then
+    mkdir -p "$candidate"
+  fi
+
+  [ -d "$candidate" ] || return 0
+
+  case " $shim_dirs " in
+    *" $candidate "*)
+      ;;
+    *)
+      shim_dirs="${shim_dirs}${shim_dirs:+ }$candidate"
+      ;;
+  esac
 }
 
 install_generated_shim() {
@@ -202,6 +243,26 @@ copy_command_shim() {
     } | install_generated_shim "$destination"
   else
     install_generated_shim "$destination" < "$source_path"
+  fi
+}
+
+verify_installed_commands() {
+  podx_path="$(command -v podx 2>/dev/null || true)"
+  if [ -z "$podx_path" ]; then
+    echo "Warning: podx command not found after install. Please add ${COCOAPODS_PODX_BIN_DIR:-$HOME/.local/bin} to PATH." >&2
+    return 0
+  fi
+
+  actual_version="$(podx version 2>/dev/null | sed -n 's/^cocoapods-podx //p' | tail -n 1 || true)"
+  if [ "$actual_version" != "$VERSION" ]; then
+    echo "Warning: podx version mismatch after install: expected $VERSION, got ${actual_version:-unknown}" >&2
+    echo "Warning: current podx path: $podx_path" >&2
+    echo "Warning: please run: hash -r && podx version" >&2
+  fi
+
+  mgit_path="$(command -v mgit 2>/dev/null || true)"
+  if [ -z "$mgit_path" ]; then
+    echo "Warning: mgit command not found after install. Please add ${COCOAPODS_PODX_BIN_DIR:-$HOME/.local/bin} to PATH." >&2
   fi
 }
 
@@ -316,6 +377,7 @@ gem install --local --ignore-dependencies --force --no-document "$GEM_FILE"
 
 install_command_shims
 ensure_publish_only_path
+verify_installed_commands
 
 echo "cocoapods-podx [installed] $VERSION"
 if [ "$PUBLISH_ONLY_MODE" = "1" ]; then

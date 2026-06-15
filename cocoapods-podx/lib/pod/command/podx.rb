@@ -102,7 +102,7 @@ class Pod::Command::Podx < Pod::Command
             podx ai update                 更新 Codex CodeGraph MCP，并检查改动影响
             podx ai doctor                 检查 AI 辅助工具状态
             podx ai mcp                    输出 Hermes MCP 注册说明
-            podx hooks install             安装版本化提交保护 hook
+            podx hooks install             安装版本化 Git 保护 hook
             podx version                   查看当前插件版本
 
       git 命令:
@@ -506,7 +506,7 @@ class Pod::Command::Podx < Pod::Command
 
     @pod_names = ['install']
     run_hooks_command(load_entries)
-    rows << ['Git hooks', '完成', '.githooks/pre-commit / post-merge']
+    rows << ['Git hooks', '完成', '.githooks/pre-commit / pre-merge-commit / post-commit / post-merge / pre-push']
 
     git_action_print_table("podx #{action} 汇总", %w[项目 状态 说明], rows)
     Pod::UI.puts "podx #{action} [done]"

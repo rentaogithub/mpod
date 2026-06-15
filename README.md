@@ -246,7 +246,7 @@ podx open                        # 打开 .xcworkspace
 podx open --overlay              # 打开或生成 Podfile.overlay
 podx upgrade                     # 升级 cocoapods-podx 到 Nexus 最新版本
 podx upgrade 0.0.51              # 升级 cocoapods-podx 到指定版本
-podx hooks install               # 安装版本化 Git 提交保护 hook，默认拦截 Podfile
+podx hooks install               # 安装版本化 Git 保护 hook，默认保护 Podfile
 podx publish                     # 触发默认发布渠道
 podx publish tf                  # 触发 TestFlight 发布
 podx publish app                 # 触发 App Store 发布
@@ -312,16 +312,18 @@ mgit stash NNBussCom             # stash 指定组件仓库
 mgit publish release/x.y.z       # 创建或更新多仓库发布分支
 ```
 
-`podx hooks install` 会展示当前工程规则，并在主工程生成可提交的 `.githooks/pre-commit` 和 `.githooks/post-merge`，同时设置本地 Git 配置 `core.hooksPath=.githooks`。默认只保护主工程的 `Podfile`；如需调整保护文件，可在 `podx.config.yml` 中配置：
+`podx hooks install` 会展示当前工程规则，并在主工程生成可提交的 `.githooks/pre-commit`、`.githooks/pre-merge-commit`、`.githooks/post-commit`、`.githooks/post-merge` 和 `.githooks/pre-push`，同时设置本地 Git 配置 `core.hooksPath=.githooks`。默认只保护主工程的 `Podfile`；如需调整保护文件，可在 `podx.config.yml` 中配置：
 
 ```yaml
 protected_commit_files:
   - Podfile
 ```
 
-受保护文件只能由 `mgit publish <branch>` 或 `mgit commit -m "msg" -edit Podfile` 提交；普通 `git commit`、未声明 `-edit` 的 `mgit commit` 和其他入口都会被 hook 拦截。`.githooks/` 可加入 Git 记录，规则内容能随仓库同步；新电脑仍需执行一次 `podx init` 或 `podx hooks install`，用于写入本地 `core.hooksPath`。
+受保护文件只能由 `mgit publish <branch>` 或 `mgit commit -m "msg" -edit Podfile` 提交；普通 `git commit`、未声明 `-edit` 的 `mgit commit` 和自动 merge commit 会被 `pre-commit` / `pre-merge-commit` 拦截。原生 `git cherry-pick` 没有 pre hook，会由 `post-commit` 检测并立即回退包含受保护文件的 cherry-pick 提交；若通过 GUI 或历史提交绕过了提交阶段，`pre-push` 会在推送前检查远端到本地的提交范围，发现受保护文件变更时拒绝推送。`.githooks/` 可加入 Git 记录，规则内容能随仓库同步；新电脑仍需执行一次 `podx init` 或 `podx hooks install`，用于写入本地 `core.hooksPath`。
 
-`git pull`、`mgit pull` 或 `git merge` 后如果受保护文件被带入变更，`post-merge` 会从 `ORIG_HEAD` 自动还原该文件并输出提示。
+`git pull`、`mgit pull` 或 `git merge` 后如果受保护文件被带入变更，`post-merge` 会从 `ORIG_HEAD` 自动还原该文件并输出提示；`git cherry-pick` 会由 `post-commit` 回退本次提交，`pre-push` 仍作为最后兜底阻止推送。
+
+当前不依赖 GitLab 服务器权限；保护链路以本地 hooks、`podx` / `mgit` 命令校验和发布前检查为准。若设备未初始化 hooks，执行 `podx init` 或 `podx hooks install` 补齐。
 
 规则清单会同时展示 `mgit publish release/x.y.z` 相关约束：发布分支、Podfile 组件分支改写、iOS 主工程 Version/Build 生成规则，以及 `podx publish tf/app` 的 release 分支限制。执行 `podx publish tf` 或 `podx publish app` 时，如果未指定 `--branch`，当前主工程分支也必须是 `release/x.x.x`；发布前还会确认主工程和依赖组件的远端 `release/x.x.x` 分支都存在。
 
