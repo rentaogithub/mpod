@@ -189,6 +189,8 @@ mgit publish release/5.14.2
 
 默认情况下，`mgit publish` 只做通用多仓库分支发布，不会修改 `Podfile`，也不会修改 Xcode 版本号。只有显式配置 `publish_main_repo`、`publish_update_podfile_branch` 和 `publish_version.type: ios_xcodeproj` 后，才会开启 iOS 工程定制动作。
 
+开启 iOS 工程定制动作后，如果 `publish_base_branch` 是 `develop`，`publish_version` 解析出的版本号和 build 号会先同步到 `develop`，再创建目标 `release/x.x.x` 分支；如果基准分支不是 `develop`，版本号和 build 号只提交到目标 release 分支，不回写该基准分支。
+
 插件会优先读取 `podx.config.yml`，旧工程中的 `Podfile.overlay.config.yml` 仍会作为兼容 fallback 读取；新工程建议只保留 `podx.config.yml`。
 
 发布配置示例：

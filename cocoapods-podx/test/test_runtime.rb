@@ -3823,8 +3823,107 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal '501410', publisher.mgit_publish_build_number('5.14.10')
   end
 
-  def test_mgit_publish_commits_version_to_base_branch_before_release_branch
-    project_dir = Dir.mktmpdir('cocoapods-podx-mgit-publish-version-base')
+  def test_mgit_publish_commits_version_only_to_release_branch_for_non_develop_base
+    project_dir = Dir.mktmpdir('cocoapods-podx-mgit-publish-version-release')
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::MgitPublish
+
+      attr_reader :commands
+
+      def initialize(project_dir)
+        @project_dir = project_dir
+        @pod_names = ['release/5.14.8']
+        @dry_run = false
+        @git_publish_base_branch = nil
+        @git_publish_push_mode = nil
+        @git_publish_work_dir = nil
+        @commands = []
+      end
+
+      def project_directory
+        @project_dir
+      end
+
+      def mgit_publish_config
+        {
+          work_dir: '.mgit-publish',
+          base_branch: 'feature/5.14.8_felix_test',
+          repos: nil,
+          main_repo: 'nnios',
+          update_podfile_branch: true,
+        }
+      end
+
+      def mgit_publish_repos
+        [{ name: 'nnios', url: 'http://git.example.com/nn_ios/nnios.git' }]
+      end
+
+      def mgit_publish_version_config
+        {
+          type: 'ios_xcodeproj',
+          branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$',
+          project_file: 'NNIM.xcodeproj/project.pbxproj',
+          build_number_strategy: 'ios_semver',
+        }
+      end
+
+      def run_git!(path, *args)
+        @commands << [path, args]
+        if args.first == 'clone'
+          repo_dir = args.last
+          FileUtils.mkdir_p(File.join(repo_dir, 'NNIM.xcodeproj'))
+          File.write(File.join(repo_dir, 'Podfile'), "pod 'NNLibrary', :branch => 'develop'\n")
+          File.write(File.join(repo_dir, 'NNIM.xcodeproj', 'project.pbxproj'), <<~PROJECT)
+            MARKETING_VERSION = 5.14.7;
+            CURRENT_PROJECT_VERSION = 501407;
+          PROJECT
+        end
+        ''
+      end
+
+      def checkout_branch!(repo_dir, branch)
+        @commands << [repo_dir, ['checkout_branch!', branch]]
+      end
+
+      def git_dirty?(_repo_dir)
+        true
+      end
+
+      def git_work_tree?(_repo_dir)
+        false
+      end
+
+      def mgit_publish_cleanup_work_dir(_work_dir)
+      end
+    end.new(project_dir)
+
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |_message = ''| }
+    publisher.publish_git_branches
+
+    command_args = publisher.commands.map(&:last)
+    base_push_index = command_args.index(['push', 'origin', 'feature/5.14.8_felix_test'])
+    release_checkout_index = command_args.index(['checkout', '-B', 'release/5.14.8', 'feature/5.14.8_felix_test'])
+    release_push_index = command_args.index(['push', 'origin', 'release/5.14.8'])
+
+    assert_nil base_push_index
+    refute_nil release_checkout_index
+    refute_nil release_push_index
+    assert_operator release_checkout_index, :<, release_push_index
+    refute_includes command_args, ['commit', '-m', 'chore: update version to 5.14.8(501408) for feature/5.14.8_felix_test']
+    assert_includes command_args, ['commit', '-m', 'chore: update publish config to release/5.14.8']
+
+    repo_dir = File.join(project_dir, '.mgit-publish', 'nnios')
+    project_file = File.read(File.join(repo_dir, 'NNIM.xcodeproj', 'project.pbxproj'))
+    assert_includes project_file, 'MARKETING_VERSION = 5.14.8;'
+    assert_includes project_file, 'CURRENT_PROJECT_VERSION = 501408;'
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_mgit_publish_commits_version_to_develop_base_branch
+    project_dir = Dir.mktmpdir('cocoapods-podx-mgit-publish-version-develop')
     publisher = Class.new do
       include CocoapodsPodx::Commands::MgitPublish
 
@@ -6344,6 +6443,70 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_match(/\| NNBasciCommon \| feature\/5\.14\.2_broadcast \| 已推送 \|/, output)
     assert_includes helper.commands, [component_path, ['push', 'origin', 'feature/5.14.2_broadcast']]
     refute_includes helper.commands, [main_path, ['push', 'origin', 'feature/5.14.2_broadcast']]
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
+  def test_git_actions_push_allows_protected_commit_hook
+    project_dir = Dir.mktmpdir('cocoapods-podx-git-push-protected')
+    helper = Class.new do
+      include CocoapodsPodx::Commands::GitActions
+
+      attr_reader :push_env
+
+      def initialize(project_dir)
+        @project_directory = project_dir
+        @push_mode = true
+        @pod_names = []
+        @dry_run = false
+      end
+
+      def project_directory
+        @project_directory
+      end
+
+      def commit_targets(_entries)
+        [{ name: 'main', path: @project_directory }]
+      end
+
+      def git_work_tree?(_path)
+        true
+      end
+
+      def git_branch_for(_path)
+        'release/5.14.9'
+      end
+
+      def git_status_lines(_path)
+        []
+      end
+
+      def git_full_head(_path)
+        '1111111111111111111111111111111111111111'
+      end
+
+      def git_ahead_count(_path, _branch)
+        1
+      end
+
+      def git_commit_summary(_path, commit)
+        "#{commit[0, 6]} commit"
+      end
+
+      def run_git!(_path, *args)
+        @push_env = ENV['COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT'] if args.first == 'push'
+        ''
+      end
+    end.new(project_dir)
+
+    ENV.delete('COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT')
+    original_puts = Pod::UI.method(:puts)
+    Pod::UI.define_singleton_method(:puts) { |_message = ''| }
+    helper.git_action_repos([])
+
+    assert_equal 'mgit_publish', helper.push_env
+    assert_nil ENV['COCOAPODS_PODX_ALLOW_PROTECTED_COMMIT']
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir

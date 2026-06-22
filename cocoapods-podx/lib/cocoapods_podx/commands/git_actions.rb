@@ -238,7 +238,9 @@ module CocoapodsPodx
                   rows << [name, branch, 'up-to-date', '-', path]
                   skipped_count += 1
                 else
-                  run_git!(path, 'push', 'origin', branch)
+                  with_git_action_protected_commit_allowed do
+                    run_git!(path, 'push', 'origin', branch)
+                  end
                   rows << [name, branch, 'pushed', git_commit_summary(path, local_commit), path]
                   done_count += 1
                 end

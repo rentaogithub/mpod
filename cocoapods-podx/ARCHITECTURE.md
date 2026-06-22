@@ -168,7 +168,7 @@ publish_version:
 
 插件会优先读取 `podx.config.yml`，旧工程中的 `Podfile.overlay.config.yml` 仍会作为兼容 fallback 读取；新工程建议只保留 `podx.config.yml`。
 
-`mgit publish` 的通用内核只负责多仓库分支发布。`publish_main_repo`、`publish_update_podfile_branch`、`publish_version` 属于工程定制动作，未显式配置时不会修改 `Podfile` 或 iOS 工程版本号。
+`mgit publish` 的通用内核只负责多仓库分支发布。`publish_main_repo`、`publish_update_podfile_branch`、`publish_version` 属于工程定制动作，未显式配置时不会修改 `Podfile` 或 iOS 工程版本号。`develop` 作为基准分支时会同步版本号和 build 号；其它基准分支不会因此产生版本号提交，版本号只写入目标发布分支。
 
 ## 功能模块
 
@@ -327,7 +327,7 @@ flowchart TD
   D --> E["checkout 基准分支"]
   E --> F["checkout -B 目标分支"]
   F --> G{"是否 nnios 主工程"}
-  G -- "是" --> H["更新 Podfile 分支和版本号"]
+  G -- "是" --> H["在目标分支更新 Podfile 分支和版本号"]
   G -- "否" --> I["直接推送目标分支"]
   H --> I
 ```

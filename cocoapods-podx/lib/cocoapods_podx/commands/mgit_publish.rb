@@ -89,7 +89,7 @@ module CocoapodsPodx
 
             run_git!(repo_dir, 'checkout', '-B', target_branch, base_branch)
 
-            target_changed_files = mgit_publish_main_repo?(name) ? mgit_publish_update_main_project(repo_dir, target_branch) : []
+            target_changed_files = mgit_publish_main_repo?(name) ? mgit_publish_update_main_project(repo_dir, target_branch, release_version, release_build) : []
             changed_files = base_changed_files.map { |file| "#{base_branch}:#{file}" } +
                             target_changed_files.map { |file| "#{target_branch}:#{file}" }
 
@@ -339,6 +339,8 @@ module CocoapodsPodx
       end
 
       def mgit_publish_update_base_project(repo_dir, base_branch, release_version, release_build)
+        return [] unless mgit_publish_should_update_base_version?(base_branch)
+
         changed_files = []
         project_file = mgit_publish_version_config[:project_file]
         if mgit_publish_version_update_enabled? && release_version && mgit_publish_update_project_version(repo_dir, release_version, release_build)
@@ -356,8 +358,16 @@ module CocoapodsPodx
         changed_files
       end
 
-      def mgit_publish_update_main_project(repo_dir, target_branch)
+      def mgit_publish_should_update_base_version?(base_branch)
+        base_branch.to_s.strip == 'develop'
+      end
+
+      def mgit_publish_update_main_project(repo_dir, target_branch, release_version = nil, release_build = nil)
         changed_files = []
+        project_file = mgit_publish_version_config[:project_file]
+        if mgit_publish_version_update_enabled? && release_version && mgit_publish_update_project_version(repo_dir, release_version, release_build)
+          changed_files << project_file
+        end
         changed_files << 'Podfile' if mgit_publish_update_podfile_branch_enabled? && mgit_publish_update_podfile_branch(repo_dir, target_branch)
         return [] if changed_files.empty? || !git_dirty?(repo_dir)
 
