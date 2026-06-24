@@ -168,7 +168,7 @@ class Pod::Command::Podx < Pod::Command
       ['--fix-job=JOB', '半自动修复时触发 Jenkins 维护 job，例如 podx-upgrade。'],
       ['--job=JOB', '指定 Jenkins job 名，例如 nnrtc-ios-build；会自动使用默认 Jenkins 主备地址。'],
       ['--jenkins-job=JOB', '同 --job。'],
-      ['--jenkins-url=URL', 'Jenkins 发布任务地址；默认优先 http://10.1.3.177:8080/job/nn/，失败后切到 http://10.1.107.211:8080/job/nn/。'],
+      ['--jenkins-url=URL', 'Jenkins 发布任务地址；默认 http://10.1.2.175:8080/job/nn/。'],
       ['--branch=BRANCH', '指定 Jenkins 发布远端分支；tf/app 必须是 release/x.x.x，等同 --publish-branch。'],
       ['--publish-branch=BRANCH', '指定 Jenkins 发布远端分支；tf/app 必须是 release/x.x.x。'],
       ['--publish-password=PASSWORD', 'Jenkins 发布验证密码；默认交互输入 TestFlight/AppStore 密码，Pgyer 默认空。'],

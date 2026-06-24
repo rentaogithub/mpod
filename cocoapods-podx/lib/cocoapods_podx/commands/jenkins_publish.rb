@@ -333,59 +333,43 @@ module CocoapodsPodx
       end
 
       def fetch_jenkins_build_log(build, line_limit: nil)
-        failed = []
-        urls = jenkins_build_urls(build)
-        urls.each_with_index do |build_url, index|
-          log_uri = URI.join(build_url, 'consoleText')
-          request = Net::HTTP::Get.new(log_uri)
-          apply_jenkins_auth(request)
-          begin
-            response = request_jenkins(log_uri, request)
-            raise Pod::Informative, jenkins_http_error_message(response) unless response.is_a?(Net::HTTPSuccess)
+        build_url = jenkins_build_url(build)
+        log_uri = URI.join(build_url, 'consoleText')
+        request = Net::HTTP::Get.new(log_uri)
+        apply_jenkins_auth(request)
+        begin
+          response = request_jenkins(log_uri, request)
+          raise Pod::Informative, jenkins_http_error_message(response) unless response.is_a?(Net::HTTPSuccess)
 
-            @selected_jenkins_job_url = jenkins_job_url_from_build_url(build_url)
-            lines = safe_jenkins_text(response.body).lines.map { |line| strip_ansi(line).rstrip }
-            lines = lines.last(line_limit.to_i) if line_limit.to_i.positive?
-            return {
-              build_url: build_url,
-              log_uri: log_uri,
-              lines: lines
-            }
-          rescue => e
-            raise unless jenkins_connection_error?(e)
+          @selected_jenkins_job_url = jenkins_job_url_from_build_url(build_url)
+          lines = safe_jenkins_text(response.body).lines.map { |line| strip_ansi(line).rstrip }
+          lines = lines.last(line_limit.to_i) if line_limit.to_i.positive?
+          {
+            build_url: build_url,
+            log_uri: log_uri,
+            lines: lines
+          }
+        rescue => e
+          raise unless jenkins_connection_error?(e)
 
-            failed << [build_url, e]
-            next_url = urls[index + 1]
-            Pod::UI.puts "【Jenkins日志】#{build_url} 不可用，切换备用：#{next_url}" if next_url
-          end
+          raise Pod::Informative, jenkins_connection_error_message(build_url, e)
         end
-
-        failed_url, error = failed.last
-        raise Pod::Informative, jenkins_connection_error_message(failed_url || jenkins_build_url(build), error)
       end
 
       def fetch_jenkins_build_history(limit)
         tree = 'builds[number,url,result,timestamp,duration,building,actions[parameters[name,value],causes[shortDescription,userId,userName]],changeSet[items[msg,commitId,author[fullName]]]]'
-        failed = []
-        urls = jenkins_job_urls_for_query
-        urls.each_with_index do |job_url, index|
-          uri = URI.join(job_url, "api/json?tree=#{tree}{0,#{limit}}")
-          begin
-            data = jenkins_json(uri)
-            @selected_jenkins_job_url = job_url
-            builds = data.fetch('builds', []).first(limit)
-            return builds.map { |build| jenkins_history_row(build) }
-          rescue => e
-            raise unless jenkins_connection_error?(e)
+        job_url = selected_jenkins_job_url
+        uri = URI.join(job_url, "api/json?tree=#{tree}{0,#{limit}}")
+        begin
+          data = jenkins_json(uri)
+          @selected_jenkins_job_url = job_url
+          builds = data.fetch('builds', []).first(limit)
+          builds.map { |build| jenkins_history_row(build) }
+        rescue => e
+          raise unless jenkins_connection_error?(e)
 
-            failed << [job_url, e]
-            next_url = urls[index + 1]
-            Pod::UI.puts "【Jenkins任务】#{job_url} 不可用，切换备用：#{next_url}" if next_url
-          end
+          raise Pod::Informative, jenkins_connection_error_message(job_url, e)
         end
-
-        failed_url, error = failed.last
-        raise Pod::Informative, jenkins_connection_error_message(failed_url || selected_jenkins_job_url, error)
       end
 
       def jenkins_history_row(build)
@@ -554,14 +538,6 @@ module CocoapodsPodx
         end
 
         URI.join(selected_jenkins_job_url, "#{build}/").to_s
-      end
-
-      def jenkins_build_urls(build)
-        if build.start_with?('http://', 'https://')
-          return [normalize_jenkins_job_url(build)]
-        end
-
-        jenkins_job_urls_for_query.map { |job_url| URI.join(job_url, "#{build}/").to_s }
       end
 
       def jenkins_job_url_from_build_url(build_url)
@@ -797,21 +773,18 @@ module CocoapodsPodx
       end
 
       def execute_remote_jenkins_fix_action(action)
-        last_error = nil
-        jenkins_fix_job_urls(action[:remote_job]).each do |job_url|
+        job_url = jenkins_fix_job_url(action[:remote_job])
+        begin
           trigger_jenkins_fix_job_with_url(job_url)
           Pod::UI.puts "【修复结果】成功 #{action[:key]}"
-          return
         rescue JenkinsConnectionError => e
-          last_error = e
-          Pod::UI.puts "【修复日志】Jenkins 修复 job 地址不可用，切换备用：#{job_url} #{e.message}"
+          Pod::UI.puts "【修复日志】Jenkins 修复 job 地址不可用：#{job_url} #{e.message}"
+          raise Pod::Informative, "Jenkins 修复 job 触发失败：#{e.message}"
         end
-
-        raise Pod::Informative, "Jenkins 修复 job 触发失败：#{last_error&.message || '所有地址均不可用'}"
       end
 
-      def jenkins_fix_job_urls(job)
-        job.to_s.start_with?('http://', 'https://') ? [normalize_jenkins_job_url(job)] : default_jenkins_job_urls(job)
+      def jenkins_fix_job_url(job)
+        job.to_s.start_with?('http://', 'https://') ? normalize_jenkins_job_url(job) : default_jenkins_job_url(job)
       end
 
       def trigger_jenkins_fix_job_with_url(job_url)
@@ -1570,7 +1543,7 @@ module CocoapodsPodx
       end
 
       def jenkins_job_url
-        jenkins_job_urls.first
+        selected_jenkins_job_url
       end
 
       def publish_jenkins_display_url
@@ -1584,19 +1557,16 @@ module CocoapodsPodx
       def select_jenkins_job_url(verbose: false)
         return @selected_jenkins_job_url if @selected_jenkins_job_url
 
-        urls = jenkins_job_urls
-        urls.each do |job_url|
-          print_publish_prepare_progress("探测 Jenkins #{job_url}") if verbose
-          if jenkins_job_available?(job_url)
-            @selected_jenkins_job_url = job_url
-            finish_publish_prepare_progress("Jenkins 可用 #{job_url}") if verbose
-            return job_url
-          end
-          print_publish_prepare_progress("Jenkins 不可用 #{job_url}") if verbose
+        job_url = configured_jenkins_job_url
+        print_publish_prepare_progress("探测 Jenkins #{job_url}") if verbose
+        if jenkins_job_available?(job_url)
+          @selected_jenkins_job_url = job_url
+          finish_publish_prepare_progress("Jenkins 可用 #{job_url}") if verbose
+          return job_url
         end
 
-        finish_publish_prepare_progress("Jenkins 不可用，使用默认 #{urls.first}") if verbose
-        @selected_jenkins_job_url = urls.first
+        finish_publish_prepare_progress("Jenkins 不可用，使用默认 #{job_url}") if verbose
+        @selected_jenkins_job_url = job_url
       end
 
       def jenkins_job_available?(job_url)
@@ -1609,65 +1579,38 @@ module CocoapodsPodx
         false
       end
 
-      def jenkins_job_urls
+      def configured_jenkins_job_url
         if @jenkins_url
-          return jenkins_job_urls_from_configured_url(@jenkins_url)
+          return jenkins_job_url_from_configured_url(@jenkins_url)
         end
 
         if @jenkins_job && !@jenkins_job.strip.empty?
-          return jenkins_job_urls_from_configured_url(@jenkins_job) if @jenkins_job.start_with?('http://', 'https://')
+          return jenkins_job_url_from_configured_url(@jenkins_job) if @jenkins_job.start_with?('http://', 'https://')
 
-          return default_jenkins_job_urls(@jenkins_job)
+          return default_jenkins_job_url(@jenkins_job)
         end
 
         jenkins_url = ENV['COCOAPODS_PODX_JENKINS_URL'] || ENV['COCOAPODS_OVERLAY_JENKINS_URL']
         if jenkins_url
-          return jenkins_job_urls_from_configured_url(jenkins_url)
+          return jenkins_job_url_from_configured_url(jenkins_url)
         end
 
-        default_jenkins_job_urls('nn')
+        default_jenkins_job_url('nn')
       end
 
-      def jenkins_job_urls_for_query
-        selected = if instance_variable_defined?(:@selected_jenkins_job_url)
-          @selected_jenkins_job_url
-        elsif method(:selected_jenkins_job_url).owner != CocoapodsPodx::Commands::JenkinsPublish
-          selected_jenkins_job_url
-        end
-        urls = jenkins_job_urls
-        return urls unless selected
-
-        [selected] + urls.reject { |url| url == selected }
-      end
-
-      def jenkins_job_urls_from_configured_url(raw_url)
-        normalized = normalize_jenkins_job_url(raw_url.to_s.strip)
-        uri = URI(normalized)
-        match = normalized.match(%r{/job/([^/]+)/?})
-        if match && default_jenkins_host?(uri.host)
-          urls = default_jenkins_job_urls(match[1])
-          return [normalized] + urls.reject { |url| url == normalized }
-        end
-
-        [normalized]
+      def jenkins_job_url_from_configured_url(raw_url)
+        normalize_jenkins_job_url(raw_url.to_s.strip)
       rescue URI::InvalidURIError
-        [normalize_jenkins_job_url(raw_url.to_s)]
+        normalize_jenkins_job_url(raw_url.to_s)
       end
 
-      def default_jenkins_host?(host)
-        %w[10.1.3.177 10.1.107.211].include?(host.to_s)
-      end
-
-      def default_jenkins_job_urls(job_name)
+      def default_jenkins_job_url(job_name)
         normalized_job = job_name.to_s.strip
         if normalized_job.start_with?('http://', 'https://')
-          return [normalize_jenkins_job_url(normalized_job)]
+          return normalize_jenkins_job_url(normalized_job)
         end
 
-        [
-          normalize_jenkins_job_url("http://10.1.3.177:8080/job/#{normalized_job}/"),
-          normalize_jenkins_job_url("http://10.1.107.211:8080/job/#{normalized_job}/")
-        ]
+        normalize_jenkins_job_url("http://10.1.2.175:8080/job/#{normalized_job}/")
       end
 
       def normalize_jenkins_job_url(raw_url)
@@ -1675,30 +1618,14 @@ module CocoapodsPodx
       end
 
       def trigger_jenkins_build(params, target_name)
-        failed_urls = []
-
-        urls = jenkins_job_urls_for_trigger
-        urls.each_with_index do |job_url, index|
+        job_url = selected_jenkins_job_url
+        begin
           return if trigger_jenkins_build_with_url(job_url, params, target_name)
         rescue JenkinsConnectionError
-          failed_urls << job_url
-          next_url = urls[index + 1]
-          if next_url
-            print_jenkins_progress("Jenkins 地址不可用：#{job_url}，切换备用：#{next_url}")
-          else
-            print_jenkins_progress("Jenkins 地址不可用：#{job_url}")
-          end
+          print_jenkins_progress("Jenkins 地址不可用：#{job_url}")
         end
 
-        raise Pod::Informative, "Jenkins 发布触发失败：所有 Jenkins 地址均不可用（#{failed_urls.join('、')}）"
-      end
-
-      def jenkins_job_urls_for_trigger
-        selected = @selected_jenkins_job_url
-        urls = jenkins_job_urls
-        return urls unless selected
-
-        [selected] + urls.reject { |url| url == selected }
+        raise Pod::Informative, "Jenkins 发布触发失败：Jenkins 地址不可用（#{job_url}）"
       end
 
       def trigger_jenkins_build_with_auto_fix_retry(params, target_name)

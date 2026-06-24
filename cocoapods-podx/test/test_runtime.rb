@@ -2059,11 +2059,11 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://10.1.3.177:8080/job/nn/'
+        'http://10.1.2.175:8080/job/nn/'
       end
 
       def request_jenkins(_uri, _request, open_timeout: nil, read_timeout: nil)
-        raise Errno::EPERM, 'Operation not permitted - connect(2) for "10.1.3.177" port 8080'
+        raise Errno::EPERM, 'Operation not permitted - connect(2) for "10.1.2.175" port 8080'
       end
     end.new(@project_dir)
 
@@ -2072,11 +2072,11 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_includes error.message, '无法连接 Jenkins'
-    assert_includes error.message, '10.1.3.177'
+    assert_includes error.message, '10.1.2.175'
     assert_includes error.message, '普通终端执行或授权网络访问'
   end
 
-  def test_show_jenkins_build_log_falls_back_to_backup_jenkins_url
+  def test_show_jenkins_build_log_does_not_try_backup_jenkins_url
     logger = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
 
@@ -2092,21 +2092,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         File.join(@project_directory, 'Podfile')
       end
 
-      def jenkins_job_urls
-        [
-          'http://10.1.3.177:8080/job/nn/',
-          'http://10.1.107.211:8080/job/nn/'
-        ]
+      def configured_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
       end
 
       def request_jenkins(uri, _request, open_timeout: nil, read_timeout: nil)
         @requested_urls << uri.to_s
-        raise Net::OpenTimeout, 'execution expired' if uri.to_s.include?('10.1.3.177')
-
-        Net::HTTPSuccess.new('1.1', '200', 'OK').tap do |response|
-          response.instance_variable_set(:@read, true)
-          response.instance_variable_set(:@body, "line1\nline2\n")
-        end
+        raise Net::OpenTimeout, 'execution expired'
       end
 
       def open_jenkins_log_file(path)
@@ -2117,14 +2109,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      logger.show_jenkins_build_log
+      assert_raises(Pod::Informative) do
+        logger.show_jenkins_build_log
+      end
     end
 
-    assert_equal 2, logger.requested_urls.length
-    assert_includes logger.requested_urls[0], '10.1.3.177'
-    assert_includes logger.requested_urls[1], '10.1.107.211'
-    assert_includes output, '切换备用：http://10.1.107.211:8080/job/nn/1274/'
-    assert_includes output, '【Jenkins日志】http://10.1.107.211:8080/job/nn/1274/consoleText'
+    assert logger.requested_urls.length >= 1
+    assert logger.requested_urls.all? { |url| url.include?('jenkins.example.com') }
+    refute logger.requested_urls.any? { |url| url.include?('jenkins-backup.example.com') }
+    refute_includes output, '切换备用'
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
@@ -2145,8 +2138,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         File.join(@project_directory, 'Podfile')
       end
 
-      def jenkins_job_urls
-        ['http://jenkins.example.com/job/nn/']
+      def configured_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
       end
 
       def jenkins_json(uri)
@@ -2234,7 +2227,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
-  def test_show_jenkins_build_history_falls_back_to_backup_jenkins_url
+  def test_show_jenkins_build_history_does_not_try_backup_jenkins_url
     history = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
 
@@ -2251,56 +2244,28 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         File.join(@project_directory, 'Podfile')
       end
 
-      def jenkins_job_urls
-        [
-          'http://10.1.3.177:8080/job/nn/',
-          'http://10.1.107.211:8080/job/nn/'
-        ]
+      def configured_jenkins_job_url
+        'http://jenkins.example.com/job/nn/'
       end
 
       def jenkins_json(uri)
         @requested_urls << uri.to_s
-        raise Net::OpenTimeout, 'execution expired' if uri.to_s.include?('10.1.3.177')
-
-        {
-          'builds' => [
-            {
-              'number' => 1282,
-              'result' => 'SUCCESS',
-              'duration' => 30_000,
-              'building' => false,
-              'actions' => [
-                {
-                  'parameters' => [
-                    { 'name' => 'branch', 'value' => 'origin/develop' },
-                    { 'name' => 'DEPLOY_TARGET', 'value' => 'Pgyer,' },
-                    { 'name' => 'PODX_TRIGGER_SOURCE', 'value' => 'podx publish' }
-                  ]
-                }
-              ],
-              'changeSet' => {
-                'items' => [
-                  { 'commitId' => 'abcdef1234567890', 'msg' => 'update: publish' }
-                ]
-              }
-            }
-          ]
-        }
+        raise Net::OpenTimeout, 'execution expired'
       end
     end.new(@project_dir)
 
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      history.show_jenkins_build_history
+      assert_raises(Pod::Informative) do
+        history.show_jenkins_build_history
+      end
     end
 
-    assert_equal 2, history.requested_urls.length
-    assert_includes history.requested_urls[0], '10.1.3.177'
-    assert_includes history.requested_urls[1], '10.1.107.211'
-    assert_includes output, '切换备用：http://10.1.107.211:8080/job/nn/'
-    assert_includes output, '【Jenkins任务】http://10.1.107.211:8080/job/nn/'
-    assert_includes output, '#1282'
+    assert history.requested_urls.length >= 1
+    assert history.requested_urls.all? { |url| url.include?('jenkins.example.com') }
+    refute history.requested_urls.any? { |url| url.include?('jenkins-backup.example.com') }
+    refute_includes output, '切换备用'
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
@@ -3456,12 +3421,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     lock&.close
   end
 
-  def test_jenkins_build_fallback_progress_only_says_switch_when_next_url_exists
+  def test_jenkins_build_failure_reports_single_jenkins_url
     publisher = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
 
-      def jenkins_job_urls
-        ['http://jenkins.example.com/job/first/', 'http://jenkins.example.com/job/second/']
+      def configured_jenkins_job_url
+        'http://jenkins.example.com/job/first/'
       end
 
       def trigger_jenkins_build_with_url(job_url, _params, _target_name)
@@ -3477,10 +3442,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
     end
 
-    assert_includes output, 'Jenkins 地址不可用：http://jenkins.example.com/job/first/，切换备用'
-    assert_includes output, 'Jenkins 地址不可用：http://jenkins.example.com/job/second/'
-    refute_includes output, '切换备用：http://jenkins.example.com/job/first/'
-    refute_includes output, 'failed http://jenkins.example.com/job/second/'
+    assert_includes output, 'Jenkins 地址不可用：http://jenkins.example.com/job/first/'
+    refute_includes output, '切换备用'
+    refute_includes output, 'second'
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
@@ -3520,8 +3484,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     publisher = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
 
-      def jenkins_job_urls
-        ['http://jenkins.example.com/job/first/', 'http://jenkins.example.com/job/second/']
+      def configured_jenkins_job_url
+        'http://jenkins.example.com/job/second/'
       end
 
       def jenkins_job_available?(job_url)
@@ -3588,10 +3552,6 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         @attempts = []
       end
 
-      def jenkins_job_urls
-        ['http://jenkins.example.com/job/first/', 'http://jenkins.example.com/job/second/']
-      end
-
       def trigger_jenkins_build_with_url(job_url, _params, _target_name)
         @attempts << job_url
         true
@@ -3629,14 +3589,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       build_number: 1274,
       result: 'FAILURE',
       failure_lines: [
-        'See http://10.1.3.177:8080/job/nn/1274/console',
+        'See http://10.1.2.175:8080/job/nn/1274/console',
         'password=admin123 token=abcdef /Users/a1/.jenkins/workspace/nn/Podfile'
       ],
-      auto_fix: { key: :jenkins_upgrade_podx, job: 'http://10.1.3.177:8080/job/pod-upgrade/' },
+      auto_fix: { key: :jenkins_upgrade_podx, job: 'http://10.1.2.175:8080/job/pod-upgrade/' },
       error: nil
     )
 
-    refute_includes prompt, '10.1.3.177'
+    refute_includes prompt, '10.1.2.175'
     refute_includes prompt, 'admin123'
     refute_includes prompt, 'abcdef'
     refute_includes prompt, '/Users/a1'
@@ -3670,7 +3630,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     report = {
       type: 'App Store Framework 元数据',
-      reason: "ERROR ITMS-90060: http://10.1.3.177/job/nn Payload/NNIM.app/Frameworks/libwebp.framework",
+      reason: "ERROR ITMS-90060: http://10.1.2.175/job/nn Payload/NNIM.app/Frameworks/libwebp.framework",
       evidence: ["CFBundleShortVersionString '1.5.0.0' in /Users/a1/workspace/nn/libwebp.framework is invalid."],
       suggestions: ['修复 framework Info.plist']
     }
@@ -3695,7 +3655,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     record = JSON.parse(File.read(db_path).lines.first)
     assert_equal 'App Store Framework 元数据', record['type']
     assert_equal 'publish_failed', record['event']
-    refute_includes record['reason'], '10.1.3.177'
+    refute_includes record['reason'], '10.1.2.175'
     refute_includes record['failure_lines'].join("\n"), 'secret'
     refute_includes record['failure_lines'].join("\n"), '/Users/a1'
     assert_match(/\A[0-9a-f]{16}\z/, record['fingerprint'])
@@ -6983,18 +6943,16 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes error.message, 'NNBussCom release/5.14.2'
   end
 
-  def test_jenkins_publish_default_job_urls
+  def test_jenkins_publish_default_job_url
     helper = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
     end.new
 
-    urls = helper.default_jenkins_job_urls('nnrtc-ios-build')
-    assert_equal 'http://10.1.3.177:8080/job/nnrtc-ios-build/', urls[0]
-    assert_equal 'http://10.1.107.211:8080/job/nnrtc-ios-build/', urls[1]
+    url = helper.default_jenkins_job_url('nnrtc-ios-build')
+    assert_equal 'http://10.1.2.175:8080/job/nnrtc-ios-build/', url
 
-    configured_urls = helper.jenkins_job_urls_from_configured_url('http://10.1.3.177:8080/job/nn/')
-    assert_equal 'http://10.1.3.177:8080/job/nn/', configured_urls[0]
-    assert_equal 'http://10.1.107.211:8080/job/nn/', configured_urls[1]
+    configured_url = helper.jenkins_job_url_from_configured_url('http://10.1.2.175:8080/job/nn/')
+    assert_equal 'http://10.1.2.175:8080/job/nn/', configured_url
   end
 
   def test_jenkins_publish_requires_job_outside_podfile_project
