@@ -258,7 +258,7 @@ module CocoapodsPodx
             Pod::UI.puts '【pull 提示】存在分支不一致且有本地变更的仓库已跳过；请先提交或 mgit stash 后再执行 mgit pull。'
           end
         elsif action == 'status'
-          git_action_print_table("#{action} 结果", %w[仓库 分支 Commit 更新 本地变更], rows.map { |row| git_status_table_row(row) })
+          git_action_print_table("#{action} 结果", %w[仓库 分支 Commit 本地变更], rows.map { |row| git_status_table_row(row) })
         elsif action == 'stash'
           git_action_print_table("#{action} #{'dry-run ' if @dry_run}结果", %w[仓库 分支 变更], rows.map { |row| git_stash_table_row(row) })
         elsif %w[add checkout merge rebase push].include?(action)
@@ -833,9 +833,9 @@ module CocoapodsPodx
       end
 
       def git_status_table_row(row)
-        repo, branch, status, detail, _path, commit, update = row
+        repo, branch, status, detail, _path, commit, = row
         change = status == 'clean' ? '-' : detail
-        [repo, branch, commit.to_s.empty? ? '-' : commit, update.to_s.empty? ? '-' : update, change]
+        [repo, branch, commit.to_s.empty? ? '-' : commit, change]
       end
 
       def git_stash_table_row(row)

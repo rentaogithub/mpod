@@ -736,6 +736,15 @@ run_pod_update_for_remote_updates() {
   return "$update_status"
 }
 
+pod_install_needs_repo_update() {
+  log_file="$1"
+  [ -f "$log_file" ] || return 1
+
+  grep -E -q \
+    "None of your spec sources contain a spec satisfying the dependencies|out-of-date source repos|pod install --repo-update|pod repo update|Unable to find a specification|CocoaPods could not find compatible versions for pod" \
+    "$log_file" 2>/dev/null
+}
+
 run_pod_install_with_auto_fix() {
   log_file="$(mktemp "${TMPDIR:-/tmp}/podx-install.XXXXXX")"
   remote_updates_file="$(mktemp "${TMPDIR:-/tmp}/podx-remote-updates.XXXXXX")"
@@ -766,6 +775,43 @@ run_pod_install_with_auto_fix() {
     rm -f "$log_file" "$remote_updates_file"
     rm -rf "$pbxproj_snapshot_dir"
     return 0
+  fi
+
+  if pod_install_needs_repo_update "$log_file"; then
+    if args_include_repo_update "$@"; then
+      echo "[podx install] specs 仓库已更新但依赖仍无法解析，请检查 pod 名称、版本约束或私有 specs 是否已发布。"
+      cat "$log_file"
+      rm -f "$log_file" "$remote_updates_file"
+      rm -rf "$pbxproj_snapshot_dir"
+      return "$status"
+    fi
+
+    echo "[podx install] 检测到 specs 仓库可能过期，自动重试：podx install --repo-update"
+    retry_log_file="$(mktemp "${TMPDIR:-/tmp}/podx-install-retry.XXXXXX")"
+    export COCOAPODS_PODX_REPO_UPDATE=1
+    run_raw_pod_install_capture "$retry_log_file" --repo-update "$@"
+    retry_status=$?
+    if [ "$retry_status" -eq 0 ]; then
+      print_pod_install_success_log "$retry_log_file"
+      run_pod_update_for_remote_updates "$remote_updates_file" "$@"
+      retry_status=$?
+      if [ "$retry_status" -ne 0 ]; then
+        rm -f "$log_file" "$retry_log_file" "$remote_updates_file"
+        rm -rf "$pbxproj_snapshot_dir"
+        return "$retry_status"
+      fi
+      restore_noop_pbxproj_changes "$pbxproj_snapshot_dir"
+      sync_graph_after_pod_install
+      echo "【podx install】完成"
+      rm -f "$log_file" "$retry_log_file" "$remote_updates_file"
+      rm -rf "$pbxproj_snapshot_dir"
+      return 0
+    fi
+
+    cat "$retry_log_file"
+    rm -f "$log_file" "$retry_log_file" "$remote_updates_file"
+    rm -rf "$pbxproj_snapshot_dir"
+    return "$retry_status"
   fi
 
   if grep -q "Verification checksum was incorrect" "$log_file" 2>/dev/null; then

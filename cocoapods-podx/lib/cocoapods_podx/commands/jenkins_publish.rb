@@ -1646,6 +1646,7 @@ module CocoapodsPodx
       end
 
       def trigger_jenkins_build_with_url(job_url, params, target_name)
+        previous_build_number = jenkins_latest_build_number(job_url)
         uri = URI.join(job_url, 'buildWithParameters')
         request = Net::HTTP::Post.new(uri)
         request.set_form_data(params)
@@ -1659,8 +1660,13 @@ module CocoapodsPodx
 
         queue_url = response['Location'].to_s
         print_jenkins_progress("已触发 #{target_name} #{params['branch'] || params['BRANCH']} #{job_url}")
-        print_jenkins_progress("队列 #{queue_url}") unless queue_url.empty?
-        wait_for_jenkins_result(job_url, queue_url, target_name) unless queue_url.empty?
+        if queue_url.empty?
+          print_jenkins_progress('Jenkins 未返回队列地址，正在从构建列表确认构建号...')
+          wait_for_jenkins_started_build(job_url, previous_build_number, target_name)
+        else
+          print_jenkins_progress("队列 #{queue_url}")
+          wait_for_jenkins_result(job_url, queue_url, target_name)
+        end
         true
       rescue => e
         raise unless jenkins_connection_error?(e)
@@ -1678,6 +1684,43 @@ module CocoapodsPodx
         build_number = build['number']
         print_jenkins_progress("构建 ##{build_number} #{build_url}")
         wait_for_jenkins_build(build_url, build_number, target_name)
+      end
+
+      def wait_for_jenkins_started_build(job_url, previous_build_number, target_name)
+        deadline = Time.now + jenkins_wait_timeout
+        previous = previous_build_number.to_i
+
+        loop do
+          raise Pod::Informative, "Jenkins #{target_name} 等待构建号超时" if Time.now > deadline
+
+          build = jenkins_newest_started_build(job_url, previous)
+          if build
+            build_url = resolve_jenkins_url(build['url'].to_s, job_url).to_s
+            build_number = build['number']
+            print_jenkins_progress("构建 ##{build_number} #{build_url}")
+            return wait_for_jenkins_build(build_url, build_number, target_name)
+          end
+
+          print_jenkins_progress('等待 Jenkins 生成构建号...')
+          sleep jenkins_poll_interval
+        end
+      end
+
+      def jenkins_newest_started_build(job_url, previous_build_number)
+        uri = URI.join(job_url, 'api/json?tree=builds[number,url,building,result,timestamp]{0,5}')
+        data = jenkins_json(uri)
+        builds = data.fetch('builds', []).compact
+        builds
+          .select { |build| build['number'].to_i > previous_build_number.to_i }
+          .max_by { |build| build['number'].to_i }
+      end
+
+      def jenkins_latest_build_number(job_url)
+        uri = URI.join(job_url, 'api/json?tree=lastBuild[number]')
+        data = jenkins_json(uri)
+        data.dig('lastBuild', 'number').to_i
+      rescue
+        0
       end
 
       def wait_for_jenkins_executable(queue_uri, target_name)
@@ -2114,19 +2157,43 @@ module CocoapodsPodx
 
       def print_jenkins_progress(message)
         line = "【打包进度】#{truncate_display(message, 100)}"
-        if $stdout.tty?
-          $stdout.print("\r#{line}#{' ' * 20}")
-          $stdout.flush
+        return if line == @last_jenkins_progress_status_line
+
+        @last_jenkins_progress_status_line = line
+        if jenkins_single_line_progress?
+          print_jenkins_single_line_progress(line)
         else
           Pod::UI.puts line
+          flush_jenkins_progress_output
         end
       end
 
-      def finish_jenkins_progress
-        return unless $stdout.tty?
+      def flush_jenkins_progress_output
+        $stdout.flush if $stdout.respond_to?(:flush)
+        $stderr.flush if $stderr.respond_to?(:flush)
+      rescue
+        nil
+      end
 
-        $stdout.print("\r#{' ' * 140}\r")
+      def jenkins_single_line_progress?
+        return false if ENV['COCOAPODS_PODX_JENKINS_SINGLE_LINE_PROGRESS'].to_s == '0'
+
+        $stdout.tty?
+      end
+
+      def print_jenkins_single_line_progress(line)
+        @jenkins_progress_line_active = true
+        $stdout.print("\r#{line}\e[K")
         $stdout.flush
+      end
+
+      def finish_jenkins_progress
+        if @jenkins_progress_line_active && $stdout.tty?
+          $stdout.print("\n")
+          $stdout.flush
+        end
+        @jenkins_progress_line_active = false
+        @last_jenkins_progress_status_line = nil
       end
 
       def jenkins_failure_lines(build_url)

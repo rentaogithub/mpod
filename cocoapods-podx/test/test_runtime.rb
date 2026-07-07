@@ -1643,6 +1643,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'overlay_names.include?(group_name)'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'Pods/$pod_name'
     assert_includes CocoapodsPodx::ShimGenerator.podx, '已清理 Pods 旧本地组件'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod_install_needs_repo_update'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'None of your spec sources contain a spec satisfying the dependencies'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '自动重试：podx install --repo-update'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'specs 仓库已更新但依赖仍无法解析'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'Verification checksum was incorrect'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_raw_pod_install_capture "$retry_log_file" --repo-update "$@"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'COCOAPODS_PODX_REMOTE_UPDATES_FILE'
@@ -2657,6 +2661,46 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
 
+  def test_jenkins_progress_uses_visible_single_line_output_in_tty
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+
+    output, = capture_io do
+      $stdout.define_singleton_method(:tty?) { true }
+      publisher.print_jenkins_progress('等待 Jenkins 打包...')
+      publisher.print_jenkins_progress('构建中 #1432 10s')
+      publisher.finish_jenkins_progress
+    end
+
+    assert_includes output, "\r【打包进度】等待 Jenkins 打包..."
+    assert_includes output, "\r【打包进度】构建中 #1432 10s"
+    assert_includes output, "\e[K"
+    assert output.end_with?("\n")
+    refute_includes output, ' ' * 140
+  end
+
+  def test_jenkins_progress_flushes_when_output_is_captured_by_shim
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+    end.new
+
+    original_puts = Pod::UI.method(:puts)
+    flushed = false
+    Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
+
+    output, = capture_io do
+      $stdout.define_singleton_method(:tty?) { false }
+      $stdout.define_singleton_method(:flush) { flushed = true }
+      publisher.print_jenkins_progress('等待 Jenkins 打包...')
+    end
+
+    assert_includes output, '【打包进度】等待 Jenkins 打包...'
+    assert flushed
+  ensure
+    Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
+  end
+
   def test_publish_success_prints_final_publish_summary
     publisher = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
@@ -3563,6 +3607,62 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal ['http://jenkins.example.com/job/second/'], publisher.attempts
   end
 
+  def test_jenkins_trigger_without_queue_location_falls_back_to_job_builds
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_reader :fallback
+
+      def apply_jenkins_auth(_request); end
+
+      def apply_jenkins_crumb(_request, _uri); end
+
+      def jenkins_latest_build_number(_job_url)
+        1431
+      end
+
+      def request_jenkins(_uri, _request)
+        response = Net::HTTPOK.new('1.1', '201', 'Created')
+        response.instance_variable_set(:@read, true)
+        response.body = ''
+        response
+      end
+
+      def wait_for_jenkins_started_build(job_url, previous_build_number, target_name)
+        @fallback = [job_url, previous_build_number, target_name]
+      end
+    end.new
+
+    publisher.trigger_jenkins_build_with_url('http://jenkins.example.com/job/nn/', { 'branch' => 'origin/develop' }, '蒲公英')
+
+    assert_equal ['http://jenkins.example.com/job/nn/', 1431, '蒲公英'], publisher.fallback
+  end
+
+  def test_jenkins_started_build_waits_for_new_build_number
+    publisher = Class.new do
+      include CocoapodsPodx::Commands::JenkinsPublish
+
+      attr_reader :waited
+
+      def jenkins_json(_uri)
+        {
+          'builds' => [
+            { 'number' => 1432, 'url' => 'http://jenkins.example.com/job/nn/1432/' },
+            { 'number' => 1431, 'url' => 'http://jenkins.example.com/job/nn/1431/' }
+          ]
+        }
+      end
+
+      def wait_for_jenkins_build(build_url, build_number, target_name)
+        @waited = [build_url, build_number, target_name]
+      end
+    end.new
+
+    publisher.wait_for_jenkins_started_build('http://jenkins.example.com/job/nn/', 1431, '蒲公英')
+
+    assert_equal ['http://jenkins.example.com/job/nn/1432/', 1432, '蒲公英'], publisher.waited
+  end
+
   def test_jenkins_timeout_defaults_allow_slow_intranet_server
     helper = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
@@ -3745,7 +3845,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     project_dir = Dir.mktmpdir('cocoapods-podx-mgit-standalone')
     FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'nnlibrary'))
     system('git', '-C', project_dir, 'init', '-q')
+    system('git', '-C', project_dir, 'checkout', '-b', 'main', out: File::NULL, err: File::NULL)
     system('git', '-C', File.join(project_dir, 'Development Pods', 'nnlibrary'), 'init', '-q')
+    system('git', '-C', File.join(project_dir, 'Development Pods', 'nnlibrary'), 'checkout', '-b', 'main', out: File::NULL, err: File::NULL)
     File.write(File.join(project_dir, 'Podfile.overlay'), "pod 'NNLibrary'\n")
 
     Dir.chdir(project_dir) do
@@ -3759,6 +3861,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       assert_includes output, '| main'
       assert_includes output, '| NNLibrary'
       assert_includes output, '| NNLibrary | main | -'
+      refute_includes output, '| 更新'
       assert_includes output, '【status 汇总】处理 1 个，跳过 1 个'
       Pod::UI.define_singleton_method(:puts, original_puts)
     end
@@ -6230,7 +6333,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     output, = capture_io do
       helper.git_action_print_table(
         'status 结果',
-        %w[仓库 分支 Commit 更新 本地变更],
+        %w[仓库 分支 Commit 本地变更],
         [
           helper.git_status_table_row(['main', 'feature/5.14.2_broadcast', 'changed', 'LoginLogic.swift', '/tmp/main', 'bd5ad0', '有更新']),
           helper.git_status_table_row(['NNBussCom', 'feature/5.14.2_broadcast', 'changed', 'NNVoiceRoomViewController.swift', '/tmp/nnbusscom', '258c70', '-']),
@@ -6241,13 +6344,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_includes output, '| Commit'
-    assert_includes output, '| 更新'
     assert_includes output, '| 本地变更'
     assert_includes output, 'LoginLogic.swift'
     refute_includes output, 'NNIM/Src/Main/Auth'
     assert_includes output, 'NNVoiceRoomViewController.swift'
     assert_includes output, 'bd5ad0'
-    assert_includes output, '有更新'
+    refute_includes output, '| 更新'
+    refute_includes output, '有更新'
     assert_includes output, '未推送 1'
 
     table_lines = output.lines.map(&:chomp).select { |line| line.start_with?('|', '+') }
