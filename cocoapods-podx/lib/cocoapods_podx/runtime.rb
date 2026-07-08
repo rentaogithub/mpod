@@ -427,7 +427,7 @@ module CocoapodsPodx
       end
 
       def print_install_main_repo_row(widths)
-        branch = current_git_branch(project_directory) || '-'
+        branch = main_app_branch || '-'
         commit = local_branch_commit_hash(project_directory, branch)
         update = local_repo_update_status(project_directory, branch)
         puts format_install_table_row(['主仓库', '本地', branch, commit, update, '正常'], widths)
@@ -588,7 +588,12 @@ module CocoapodsPodx
       end
 
       def local_branch_commit_hash(repo_path, branch)
-        stdout, status = Open3.capture2e('git', '-C', repo_path, 'rev-parse', '--short=6', branch.to_s)
+        ref = branch.to_s.strip
+        ref = 'HEAD' if ref.empty? || ref == '-'
+        stdout, status = Open3.capture2e('git', '-C', repo_path, 'rev-parse', '--short=6', ref)
+        return stdout.strip if status.success? && !stdout.strip.empty?
+
+        stdout, status = Open3.capture2e('git', '-C', repo_path, 'rev-parse', '--short=6', 'HEAD')
         return stdout.strip if status.success? && !stdout.strip.empty?
 
         '-'
@@ -715,7 +720,22 @@ module CocoapodsPodx
       end
 
       def main_app_branch
-        current_git_branch(project_directory) || current_git_branch(Dir.pwd)
+        current_git_branch(project_directory) || jenkins_git_branch || current_git_branch(Dir.pwd)
+      end
+
+      def jenkins_git_branch
+        raw = ENV['BRANCH_NAME'] || ENV['GIT_BRANCH'] || ENV['CHANGE_BRANCH'] || ENV['ghprbSourceBranch']
+        normalize_git_branch_name(raw)
+      end
+
+      def normalize_git_branch_name(branch)
+        value = branch.to_s.strip
+        return nil if value.empty?
+
+        value
+          .sub(%r{\Arefs/heads/}, '')
+          .sub(%r{\Arefs/remotes/}, '')
+          .sub(%r{\Aorigin/}, '')
       end
 
       def ensure_local_repo_exists!(name:, local_repo_path:, expected_branch:, group_name:, remote_name:, custom_git_target:)

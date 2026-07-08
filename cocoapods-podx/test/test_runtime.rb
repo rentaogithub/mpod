@@ -1,4 +1,5 @@
 require 'fileutils'
+require 'shellwords'
 require 'tmpdir'
 require 'minitest/autorun'
 
@@ -344,6 +345,33 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       assert_includes output, '| 正常'
       refute_includes output, 'http://git.example.com/nn_ios/nnyytext.git'
     end
+  end
+
+  def test_pod_install_main_repo_row_uses_jenkins_branch_when_head_is_detached
+    project_dir = Dir.mktmpdir('cocoapods-podx-jenkins-detached')
+    File.write(File.join(project_dir, 'podx.config.yml'), File.read(File.join(@project_dir, 'podx.config.yml')))
+    File.write(File.join(project_dir, 'Podfile'), File.read(File.join(@project_dir, 'Podfile')))
+    system('git', '-C', project_dir, 'init', '-q')
+    system('git', '-C', project_dir, 'config', 'user.email', 'podx@example.com')
+    system('git', '-C', project_dir, 'config', 'user.name', 'podx')
+    system('git', '-C', project_dir, 'add', 'podx.config.yml', 'Podfile')
+    system('git', '-C', project_dir, 'commit', '-q', '-m', 'init')
+    commit = `git -C #{Shellwords.escape(project_dir)} rev-parse --short=6 HEAD`.strip
+    system('git', '-C', project_dir, 'checkout', '--detach', 'HEAD', out: File::NULL, err: File::NULL)
+
+    previous_git_branch = ENV['GIT_BRANCH']
+    ENV['GIT_BRANCH'] = 'origin/develop'
+    CocoapodsPodx::Runtime.configure(project_directory: project_dir)
+
+    output = capture_io do
+      CocoapodsPodx::Runtime.send(:print_install_dependency_row, name: 'NNLibrary', source: '远端', branch: 'develop', commit: 'abcdef')
+    end.first
+
+    assert_match(/\| 主仓库\s+\| 本地 \| develop\s+\| #{Regexp.escape(commit)} \|/, output)
+  ensure
+    ENV['GIT_BRANCH'] = previous_git_branch
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
+    FileUtils.rm_rf(project_dir) if project_dir
   end
 
   def test_pod_install_runtime_prints_repo_update_hint_when_remote_lock_commit_is_behind
