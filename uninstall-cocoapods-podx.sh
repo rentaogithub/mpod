@@ -14,7 +14,34 @@ if [ -z "$POD_BIN" ]; then
   exit 1
 fi
 
-COCOAPODS_GEM_HOME="${COCOAPODS_GEM_HOME:-$(ruby -e '
+detect_ruby_bin() {
+  if [ -n "${COCOAPODS_PODX_RUBY_BIN:-}" ]; then
+    printf '%s\n' "$COCOAPODS_PODX_RUBY_BIN"
+    return 0
+  fi
+
+  if [ -f "$POD_BIN" ]; then
+    pod_shebang="$(sed -n '1s/^#!//p' "$POD_BIN")"
+    case "$pod_shebang" in
+      */ruby)
+        if [ -x "$pod_shebang" ]; then
+          printf '%s\n' "$pod_shebang"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+
+  command -v ruby
+}
+
+RUBY_BIN="$(detect_ruby_bin)"
+GEM_BIN="${COCOAPODS_PODX_GEM_BIN:-$(dirname "$RUBY_BIN")/gem}"
+if [ ! -x "$GEM_BIN" ]; then
+  GEM_BIN="$(command -v gem)"
+fi
+
+COCOAPODS_GEM_HOME="${COCOAPODS_GEM_HOME:-$("$RUBY_BIN" -e '
 pod_bin = ARGV[0]
 
 paths = [pod_bin]
@@ -46,11 +73,11 @@ mkdir -p "$GEM_SPEC_CACHE_DIR"
 echo "Uninstalling cocoapods-podx from $COCOAPODS_GEM_HOME..."
 
 for gem_name in cocoapods-podx cocoapods-overlay; do
-  if GEM_HOME="$COCOAPODS_GEM_HOME" GEM_PATH="$COCOAPODS_GEM_HOME" GEM_SPEC_CACHE="$GEM_SPEC_CACHE_DIR" gem list -i "$gem_name" >/dev/null 2>&1; then
+  if GEM_HOME="$COCOAPODS_GEM_HOME" GEM_PATH="$COCOAPODS_GEM_HOME" GEM_SPEC_CACHE="$GEM_SPEC_CACHE_DIR" "$GEM_BIN" list -i "$gem_name" >/dev/null 2>&1; then
     GEM_HOME="$COCOAPODS_GEM_HOME" \
     GEM_PATH="$COCOAPODS_GEM_HOME" \
     GEM_SPEC_CACHE="$GEM_SPEC_CACHE_DIR" \
-    gem uninstall "$gem_name" --all --executables --force --ignore-dependencies
+    "$GEM_BIN" uninstall "$gem_name" --all --executables --force --ignore-dependencies
   else
     echo "$gem_name [not installed]"
   fi

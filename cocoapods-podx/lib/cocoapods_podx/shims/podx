@@ -117,19 +117,45 @@ detect_cocoapods_gem_home() {
       echo "$parsed"
       return 0
     fi
+
+    ruby_bin="$(sed -n '1s/^#!//p' "$pod_path" 2>/dev/null | awk '{print $1}')"
+    if [ -n "$ruby_bin" ] && [ -x "$ruby_bin" ]; then
+      "$ruby_bin" -e 'spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec ? spec.base_dir : ""' 2>/dev/null
+      return 0
+    fi
   fi
 
   ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec ? spec.base_dir : ""' 2>/dev/null
 }
 
 detect_cocoapods_ruby() {
+  pod_path="$(command -v pod 2>/dev/null)"
+  if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then
+    ruby_bin="$(sed -n '1s/^#!//p' "$pod_path" 2>/dev/null | awk '{print $1}')"
+    if [ -n "$ruby_bin" ] && [ -x "$ruby_bin" ]; then
+      echo "$ruby_bin"
+      return 0
+    fi
+  fi
+
+  local_gem_home="${gem_home:-$(detect_cocoapods_gem_home)}"
+  pod_exec="$local_gem_home/bin/pod"
+  if [ -f "$pod_exec" ]; then
+    ruby_bin="$(sed -n '1s/^#!//p' "$pod_exec" 2>/dev/null | awk '{print $1}')"
+    if [ -n "$ruby_bin" ] && [ -x "$ruby_bin" ]; then
+      echo "$ruby_bin"
+      return 0
+    fi
+  fi
+
   command -v ruby
 }
 
 podx_spec_value() {
   query="$1"
   local_gem_home="${gem_home:-$(detect_cocoapods_gem_home)}"
-  PODX_SPEC_QUERY="$query" PODX_GEM_HOME="$local_gem_home" ruby -e '
+  ruby_bin="$(detect_cocoapods_ruby)"
+  PODX_SPEC_QUERY="$query" PODX_GEM_HOME="$local_gem_home" "$ruby_bin" -e '
 require "rubygems"
 
 entries = []
@@ -185,7 +211,7 @@ latest_podx_version_from_nexus() {
   NEXUS_SEARCH_API="${COCOAPODS_PODX_NEXUS_SEARCH_API:-${COCOAPODS_OVERLAY_NEXUS_SEARCH_API:-http://172.31.4.4:9091/service/rest/beta/search/assets?repository=nn_ios}}" \
   NEXUS_USER="${COCOAPODS_PODX_NEXUS_USER:-${COCOAPODS_OVERLAY_NEXUS_USER:-admin}}" \
   NEXUS_PASSWORD="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSWORD:-admin123}}" \
-  ruby -e '
+  "$(detect_cocoapods_ruby)" -e '
 require "json"
 require "net/http"
 require "uri"
@@ -225,9 +251,12 @@ upgrade_cocoapods_podx() {
   current_version="$1"
   target_version="$2"
   COCOAPODS_PODX_UPGRADED=0
+  ruby_bin="$(detect_cocoapods_ruby)"
+  gem_bin="$(dirname "$ruby_bin")/gem"
+  [ -x "$gem_bin" ] || gem_bin="$(command -v gem)"
   gem_home="$(detect_cocoapods_gem_home)"
   if [ -z "$gem_home" ]; then
-    gem_home="$(ruby -e 'require "rubygems"; puts Gem.user_dir')"
+    gem_home="$("$ruby_bin" -e 'require "rubygems"; puts Gem.user_dir')"
   fi
 
   if [ -z "$target_version" ]; then
@@ -269,9 +298,9 @@ upgrade_cocoapods_podx() {
 
   GEM_HOME="$gem_home" \
   GEM_PATH="$gem_home" \
-  gem install --local --ignore-dependencies --force --no-document "$gem_file"
+  "$gem_bin" install --local --ignore-dependencies --force --no-document "$gem_file"
 
-  installed_dir="$(GEM_HOME="$gem_home" GEM_PATH="$gem_home" ruby -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec.full_gem_path')"
+  installed_dir="$(GEM_HOME="$gem_home" GEM_PATH="$gem_home" "$ruby_bin" -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec.full_gem_path')"
   command_dir="${COCOAPODS_PODX_COMMAND_DIR:-$(dirname "$0")}"
   if [ -w "$command_dir" ]; then
     install_upgrade_shim "$installed_dir/bin/podx" "$command_dir/podx"
@@ -356,7 +385,7 @@ podx_gitlab_url() {
 
   config_path="podx.config.yml"
   if [ -f "$config_path" ]; then
-    parsed="$(ruby -ryaml -e 'config = YAML.load_file(ARGV[0]) || {}; puts config["git_base_url"].to_s' "$config_path" 2>/dev/null || true)"
+    parsed="$("$(detect_cocoapods_ruby)" -ryaml -e 'config = YAML.load_file(ARGV[0]) || {}; puts config["git_base_url"].to_s' "$config_path" 2>/dev/null || true)"
     if [ -n "$parsed" ]; then
       echo "$parsed"
       return 0
@@ -379,7 +408,7 @@ GUIDE
 podx_git_token_validate() {
   token="$1"
   gitlab_url="$(podx_gitlab_url)"
-  PODX_GIT_TOKEN_TO_VALIDATE="$token" PODX_GITLAB_URL="$gitlab_url" ruby <<'RUBY'
+  PODX_GIT_TOKEN_TO_VALIDATE="$token" PODX_GITLAB_URL="$gitlab_url" "$(detect_cocoapods_ruby)" <<'RUBY'
 require "net/http"
 require "uri"
 
@@ -498,13 +527,13 @@ HELP
 
 run_publish_only() {
   detect_podx_lib_and_gem_env
-  run_with_wait_progress "podx" ruby -rcocoapods_podx/publish_only -e 'CocoapodsPodx::PublishOnly.run(ARGV)' -- "$@"
+  run_with_wait_progress "podx" "$(detect_cocoapods_ruby)" -rcocoapods_podx/publish_only -e 'CocoapodsPodx::PublishOnly.run(ARGV)' -- "$@"
   exit $?
 }
 
 run_pod_overlay() {
   detect_podx_lib_and_gem_env
-  COCOAPODS_PODX_INTERNAL=1 run_with_wait_progress "podx" ruby -e '
+  COCOAPODS_PODX_INTERNAL=1 run_with_wait_progress "podx" "$(detect_cocoapods_ruby)" -e '
 value_options = %w[
   --branch
   --publish-branch
@@ -571,7 +600,7 @@ snapshot_pbxproj_files() {
 }
 
 pbxproj_diff_is_noop() {
-  ruby - "$1" "$2" <<'RUBY'
+  "$(detect_cocoapods_ruby)" - "$1" "$2" <<'RUBY'
 before_path, after_path = ARGV
 
 def normalize_pbxproj_noop_changes(path)
@@ -634,7 +663,7 @@ run_raw_pod_install_capture() {
 overlay_pod_names() {
   [ -f "Podfile.overlay" ] || return 0
 
-  ruby <<'RUBY' 2>/dev/null
+  "$(detect_cocoapods_ruby)" <<'RUBY' 2>/dev/null
 def pod_names_from(path)
   return [] unless File.exist?(path)
 

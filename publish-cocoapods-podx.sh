@@ -16,6 +16,34 @@ NEXUS_PASSWORD="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSW
 PUBLISH_PASSWORD="${COCOAPODS_PODX_PUBLISH_PASSWORD:-${COCOAPODS_OVERLAY_PUBLISH_PASSWORD:-admin123}}"
 REQUESTED_VERSION="${1:-${COCOAPODS_PODX_VERSION:-${COCOAPODS_OVERLAY_VERSION:-}}}"
 
+detect_ruby_bin() {
+  if [ -n "${COCOAPODS_PODX_RUBY_BIN:-}" ]; then
+    printf '%s\n' "$COCOAPODS_PODX_RUBY_BIN"
+    return 0
+  fi
+
+  pod_bin="$(command -v pod 2>/dev/null || true)"
+  if [ -n "$pod_bin" ] && [ -f "$pod_bin" ]; then
+    pod_shebang="$(sed -n '1s/^#!//p' "$pod_bin")"
+    case "$pod_shebang" in
+      */ruby)
+        if [ -x "$pod_shebang" ]; then
+          printf '%s\n' "$pod_shebang"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+
+  command -v ruby
+}
+
+RUBY_BIN="$(detect_ruby_bin)"
+GEM_BIN="${COCOAPODS_PODX_GEM_BIN:-$(dirname "$RUBY_BIN")/gem}"
+if [ ! -x "$GEM_BIN" ]; then
+  GEM_BIN="$(command -v gem)"
+fi
+
 printf "请输入发布密码: "
 read -r INPUT_PUBLISH_PASSWORD
 
@@ -43,11 +71,11 @@ generate_build_shims() {
   done
 }
 
-CURRENT_VERSION="$(ruby -e "spec = Gem::Specification.load(ARGV[0]); abort('Failed to load gemspec') unless spec; puts spec.version" "$GEMSPEC_PATH")"
+CURRENT_VERSION="$("$RUBY_BIN" -e "spec = Gem::Specification.load(ARGV[0]); abort('Failed to load gemspec') unless spec; puts spec.version" "$GEMSPEC_PATH")"
 LATEST_NEXUS_VERSION=""
 
 if [ -z "$REQUESTED_VERSION" ]; then
-  LATEST_NEXUS_VERSION="$(ruby -rjson -rnet/http -ruri -e '
+  LATEST_NEXUS_VERSION="$("$RUBY_BIN" -rjson -rnet/http -ruri -e '
 source = ARGV[0]
 user = ARGV[1]
 password = ARGV[2]
@@ -99,7 +127,7 @@ if [ -n "$REQUESTED_VERSION" ]; then
   VERSION="$REQUESTED_VERSION"
 else
   BASE_VERSION="${LATEST_NEXUS_VERSION:-$CURRENT_VERSION}"
-  VERSION="$(ruby -e '
+  VERSION="$("$RUBY_BIN" -e '
 version = ARGV[0].split(".")
 abort("Invalid version: #{ARGV[0]}") if version.empty? || version.any? { |part| part !~ /\A\d+\z/ }
 version[-1] = (version[-1].to_i + 1).to_s
@@ -107,7 +135,7 @@ puts version.join(".")
 ' "$BASE_VERSION")"
 fi
 
-ruby -e '
+"$RUBY_BIN" -e '
 path = ARGV[0]
 version = ARGV[1]
 abort("Invalid version: #{version}") unless version.match?(/\A\d+(?:\.\d+)*\z/)
@@ -130,7 +158,7 @@ fi
 
 cd "$PLUGIN_DIR"
 generate_build_shims
-gem build cocoapods-podx.gemspec
+"$GEM_BIN" build cocoapods-podx.gemspec
 find "$PLUGIN_DIR" -maxdepth 1 -name 'cocoapods-podx-*.gem' ! -name "cocoapods-podx-$VERSION.gem" -delete
 
 GEM_FILE="$PLUGIN_DIR/cocoapods-podx-$VERSION.gem"

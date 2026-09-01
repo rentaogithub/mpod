@@ -890,7 +890,8 @@ class Pod::Command::Podx < Pod::Command
       return match[1] if match
     end
 
-    gem_home = `ruby -e 'require "rubygems"; spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec&.base_dir'`.strip
+    spec = Gem::Specification.find_all_by_name('cocoapods').max_by(&:version)
+    gem_home = spec&.base_dir.to_s
     raise Pod::Informative, '无法检测 CocoaPods gem 环境' if gem_home.empty?
 
     gem_home
