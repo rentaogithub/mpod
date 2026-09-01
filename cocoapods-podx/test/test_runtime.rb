@@ -1,4 +1,6 @@
 require 'fileutils'
+require 'open3'
+require 'rbconfig'
 require 'shellwords'
 require 'tmpdir'
 require 'minitest/autorun'
@@ -1649,6 +1651,36 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(legacy_dir) if legacy_dir
   end
 
+  def test_podx_shim_detects_ruby_behind_homebrew_style_shell_pod_wrapper
+    Dir.mktmpdir('cocoapods-podx-shim-ruby') do |dir|
+      bin_dir = File.join(dir, 'bin')
+      gem_home = File.join(dir, 'cocoapods-gem-home')
+      FileUtils.mkdir_p([bin_dir, File.join(gem_home, 'bin')])
+
+      File.write(File.join(bin_dir, 'pod'), <<~SH)
+        #!/bin/sh
+        GEM_HOME="#{gem_home}" exec "#{gem_home}/bin/pod" "$@"
+      SH
+      FileUtils.chmod('+x', File.join(bin_dir, 'pod'))
+
+      File.write(File.join(gem_home, 'bin', 'pod'), <<~SH)
+        #!#{RbConfig.ruby}
+      SH
+      FileUtils.chmod('+x', File.join(gem_home, 'bin', 'pod'))
+
+      shim = CocoapodsPodx::ShimGenerator.podx
+      probe = shim[0...shim.index("\npodx_spec_value()")]
+      probe << "\ndetect_cocoapods_ruby\n"
+      probe_path = File.join(dir, 'probe.sh')
+      File.write(probe_path, probe)
+
+      stdout, stderr, status = Open3.capture3({ 'PATH' => "#{bin_dir}:#{ENV.fetch('PATH')}" }, '/bin/sh', probe_path)
+
+      assert status.success?, stderr
+      assert_equal RbConfig.ruby, stdout.strip
+    end
+  end
+
   def test_shim_generator_reads_bin_templates
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod 扩展命令'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx workon NNBussCom'
@@ -1772,6 +1804,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'spec.base_dir'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'File.expand_path("..", spec.full_gem_path)'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_cocoapods_ruby'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'ruby_shebang_from()'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, '*/ruby|*/ruby[0-9.]*|ruby|ruby[0-9.]*)'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'detect_podx_lib_path'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod_available'
     refute_includes CocoapodsPodx::ShimGenerator.podx, 'pod --version'
@@ -1808,6 +1842,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_cocoapods_gem_home'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'spec.base_dir'
     refute_includes CocoapodsPodx::ShimGenerator.mgit, 'File.expand_path("..", spec.full_gem_path)'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, 'ruby_shebang_from()'
+    assert_includes CocoapodsPodx::ShimGenerator.mgit, '*/ruby|*/ruby[0-9.]*|ruby|ruby[0-9.]*)'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'detect_podx_lib_path'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'load_podx_git_token_from_keychain'
     assert_includes CocoapodsPodx::ShimGenerator.mgit, 'security find-generic-password'

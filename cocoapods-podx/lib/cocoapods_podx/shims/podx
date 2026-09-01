@@ -109,6 +109,34 @@ run_capture_with_wait_progress() {
   return "$progress_status"
 }
 
+ruby_shebang_from() {
+  executable_path="$1"
+  shebang="$(sed -n '1s/^#!//p' "$executable_path" 2>/dev/null)"
+  set -- $shebang
+  ruby_bin="${1:-}"
+
+  case "$ruby_bin" in
+    */env|env)
+      case "${2:-}" in
+        ruby|ruby[0-9.]*)
+          ruby_bin="$(command -v "$2" 2>/dev/null || true)"
+          ;;
+      esac
+      ;;
+  esac
+
+  case "$ruby_bin" in
+    */ruby|*/ruby[0-9.]*|ruby|ruby[0-9.]*)
+      if [ -n "$ruby_bin" ] && [ -x "$ruby_bin" ]; then
+        echo "$ruby_bin"
+        return 0
+      fi
+      ;;
+  esac
+
+  return 1
+}
+
 detect_cocoapods_gem_home() {
   pod_path="$(command -v pod 2>/dev/null)"
   if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then
@@ -118,10 +146,13 @@ detect_cocoapods_gem_home() {
       return 0
     fi
 
-    ruby_bin="$(sed -n '1s/^#!//p' "$pod_path" 2>/dev/null | awk '{print $1}')"
-    if [ -n "$ruby_bin" ] && [ -x "$ruby_bin" ]; then
-      "$ruby_bin" -e 'spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec ? spec.base_dir : ""' 2>/dev/null
-      return 0
+    ruby_bin="$(ruby_shebang_from "$pod_path" || true)"
+    if [ -n "$ruby_bin" ]; then
+      parsed="$("$ruby_bin" -e 'spec = Gem::Specification.find_all_by_name("cocoapods").max_by(&:version); puts spec ? spec.base_dir : ""' 2>/dev/null || true)"
+      if [ -n "$parsed" ]; then
+        echo "$parsed"
+        return 0
+      fi
     fi
   fi
 
@@ -131,8 +162,8 @@ detect_cocoapods_gem_home() {
 detect_cocoapods_ruby() {
   pod_path="$(command -v pod 2>/dev/null)"
   if [ -n "$pod_path" ] && [ -f "$pod_path" ]; then
-    ruby_bin="$(sed -n '1s/^#!//p' "$pod_path" 2>/dev/null | awk '{print $1}')"
-    if [ -n "$ruby_bin" ] && [ -x "$ruby_bin" ]; then
+    ruby_bin="$(ruby_shebang_from "$pod_path" || true)"
+    if [ -n "$ruby_bin" ]; then
       echo "$ruby_bin"
       return 0
     fi
@@ -141,8 +172,8 @@ detect_cocoapods_ruby() {
   local_gem_home="${gem_home:-$(detect_cocoapods_gem_home)}"
   pod_exec="$local_gem_home/bin/pod"
   if [ -f "$pod_exec" ]; then
-    ruby_bin="$(sed -n '1s/^#!//p' "$pod_exec" 2>/dev/null | awk '{print $1}')"
-    if [ -n "$ruby_bin" ] && [ -x "$ruby_bin" ]; then
+    ruby_bin="$(ruby_shebang_from "$pod_exec" || true)"
+    if [ -n "$ruby_bin" ]; then
       echo "$ruby_bin"
       return 0
     fi
@@ -155,6 +186,10 @@ podx_spec_value() {
   query="$1"
   local_gem_home="${gem_home:-$(detect_cocoapods_gem_home)}"
   ruby_bin="$(detect_cocoapods_ruby)"
+  if [ -n "$local_gem_home" ]; then
+    export GEM_HOME="$local_gem_home"
+    export GEM_PATH="$local_gem_home${GEM_PATH:+:$GEM_PATH}"
+  fi
   PODX_SPEC_QUERY="$query" PODX_GEM_HOME="$local_gem_home" "$ruby_bin" -e '
 require "rubygems"
 
