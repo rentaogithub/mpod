@@ -135,6 +135,8 @@ class Pod::Command::Podx < Pod::Command
   def self.options
     [
       ['--main', '查看主 Podfile 中的组件配置。'],
+      ['--line=LINE', '选择产品线配置，等同 --product-line。'],
+      ['--product-line=LINE', '选择产品线配置；未指定时读取 PODX_PRODUCT_LINE 或 default_product_line。'],
       ['--deps', '查看主工程依赖组件分支/版本和组件依赖关系。'],
       ['--rules', '查看当前工程规则器规则；支持 check/sync/snapshot/ci 子命令。'],
       ['--pipeline', '查看团队 CI/CD 能力地图；支持 flow、ci、script、doctor、snapshot、report、status、gate、policy、readiness 子命令。'],
@@ -200,6 +202,7 @@ class Pod::Command::Podx < Pod::Command
 
   def initialize(argv)
     @project_directory = argv.option('project-directory')
+    @product_line = argv.option('line') || argv.option('product-line')
     @main_mode = argv.flag?('main', false)
     @deps_mode = argv.flag?('deps', false)
     @rules_mode = argv.flag?('rules', false)
@@ -612,7 +615,7 @@ class Pod::Command::Podx < Pod::Command
   def configure_runtime!
     return if @runtime_configured
 
-    CocoapodsPodx::Runtime.configure(project_directory: project_directory)
+    CocoapodsPodx::Runtime.configure(project_directory: project_directory, product_line: @product_line)
     @runtime_configured = true
   end
 
@@ -623,7 +626,7 @@ class Pod::Command::Podx < Pod::Command
 
   def overlay_path
     configure_runtime!
-    File.join(project_directory, 'Podfile.overlay')
+    CocoapodsPodx::Runtime.send(:overlay_path)
   end
 
   def config_path
@@ -772,6 +775,22 @@ class Pod::Command::Podx < Pod::Command
       "#   branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$'",
       '#   project_file: NNIM.xcodeproj/project.pbxproj',
       '#   build_number_strategy: ios_semver',
+      '',
+      '# 平台托管工程建议由 nn-ios-platform 同步单产品线扁平配置。',
+      '# product_line: nnrtc',
+      '# target_name: nnrtc_ios',
+      '# private_source: http://git.example.com/nnrtc_ios/nnspec.git',
+      '# git_base_url: http://git.example.com',
+      '# overlay_file: Podfile.overlay',
+      '# publish_work_dir: .mgit-publish/nnrtc',
+      '# publish_base_branch: develop',
+      '# publish_main_repo: nnrtc-ios',
+      '# publish_repos:',
+      '#   - nnrtc-ios',
+      '#   - nnrtc-core',
+      '# jenkins_base_url: http://jenkins.example.com',
+      '# jenkins_job: nnrtc-ios-build',
+      '# jenkins_repo_url: http://git.example.com/nnrtc_ios/nnrtc-ios.git',
     ]
 
     lines << ''

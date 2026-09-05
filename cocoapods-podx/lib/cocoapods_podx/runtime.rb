@@ -2,6 +2,7 @@ require 'fileutils'
 require 'open3'
 require 'timeout'
 require 'yaml'
+require_relative 'product_line_config'
 
 module CocoapodsPodx
   module Runtime
@@ -44,9 +45,10 @@ module CocoapodsPodx
     class << self
       attr_writer :project_directory, :config_path
 
-      def configure(project_directory:, config_path: nil)
+      def configure(project_directory:, config_path: nil, product_line: nil)
         @project_directory = File.expand_path(project_directory)
         @config_path = config_path && File.expand_path(config_path)
+        @product_line = product_line
         @overlay = nil
         @supported_overlay_names = nil
         @managed_pod_definitions = nil
@@ -66,6 +68,10 @@ module CocoapodsPodx
 
       def git_base_url
         project_config[:git_base_url]
+      end
+
+      def product_line
+        project_config[:product_line_id]
       end
 
       def managed_pod_definition(name)
@@ -276,7 +282,7 @@ module CocoapodsPodx
         end
 
         raw = YAML.safe_load(File.read(config_path), permitted_classes: [], permitted_symbols: [], aliases: false) || {}
-        @project_config = normalize_hash_keys(raw)
+        @project_config = CocoapodsPodx::ProductLineConfig.resolve(normalize_hash_keys(raw), @product_line)
       end
 
       def normalize_hash_keys(value)
@@ -351,7 +357,9 @@ module CocoapodsPodx
       end
 
       def overlay_path
-        File.join(project_directory, 'Podfile.overlay')
+        overlay_file = project_config[:overlay_file].to_s.strip
+        overlay_file = 'Podfile.overlay' if overlay_file.empty?
+        File.expand_path(overlay_file, project_directory)
       end
 
       def load_overlay

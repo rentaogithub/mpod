@@ -272,10 +272,12 @@ module CocoapodsPodx
 
         @pipeline_project_config = begin
           config_file = respond_to?(:project_directory) ? File.join(project_directory, 'podx.config.yml') : nil
-          if config_file && File.exist?(config_file)
+          if defined?(CocoapodsPodx::Runtime)
+            product_line = instance_variable_defined?(:@product_line) ? @product_line : nil
+            CocoapodsPodx::Runtime.configure(project_directory: project_directory, product_line: product_line) if respond_to?(:project_directory)
+            CocoapodsPodx::Runtime.config
+          elsif config_file && File.exist?(config_file)
             pipeline_normalize_hash_keys(YAML.safe_load(File.read(config_file), permitted_classes: [], permitted_symbols: [], aliases: false) || {})
-          elsif defined?(CocoapodsPodx::Runtime)
-            CocoapodsPodx::Runtime.project_config
           else
             {}
           end

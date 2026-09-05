@@ -581,6 +581,8 @@ value_options = %w[
   --fix-job
   --lines
   --limit
+  --line
+  --product-line
 ]
 normalized = []
 args = ARGV.dup
@@ -696,9 +698,10 @@ run_raw_pod_install_capture() {
 }
 
 overlay_pod_names() {
-  [ -f "Podfile.overlay" ] || return 0
+  overlay_file="$(podx_current_overlay_file)"
+  [ -f "$overlay_file" ] || return 0
 
-  "$(detect_cocoapods_ruby)" <<'RUBY' 2>/dev/null
+  PODX_OVERLAY_FILE_PATH="$overlay_file" "$(detect_cocoapods_ruby)" <<'RUBY' 2>/dev/null
 def pod_names_from(path)
   return [] unless File.exist?(path)
 
@@ -715,7 +718,7 @@ def group_name_from_pod_line(line)
     line[/group_name:\s*["']([^"']+)["']/, 1]
 end
 
-overlay_names = pod_names_from("Podfile.overlay")
+overlay_names = pod_names_from(ENV["PODX_OVERLAY_FILE_PATH"].to_s)
 names = overlay_names.dup
 
 if File.exist?("Podfile")
@@ -738,6 +741,86 @@ end
 puts names.uniq
 RUBY
 }
+
+podx_current_overlay_file() {
+  if [ -n "${COCOAPODS_PODX_OVERLAY_FILE:-}" ]; then
+    echo "$COCOAPODS_PODX_OVERLAY_FILE"
+    return 0
+  fi
+
+  "$(detect_cocoapods_ruby)" <<'RUBY' 2>/dev/null
+require "yaml"
+
+def normalize(value)
+  case value
+  when Hash
+    value.each_with_object({}) { |(key, nested), memo| memo[key.to_s] = normalize(nested) }
+  when Array
+    value.map { |item| normalize(item) }
+  else
+    value
+  end
+end
+
+path = %w[podx.config.yml Podfile.overlay.config.yml].find { |candidate| File.exist?(candidate) }
+unless path
+  puts "Podfile.overlay"
+  exit
+end
+
+config = normalize(YAML.safe_load(File.read(path), permitted_classes: [], permitted_symbols: [], aliases: false) || {})
+line = ENV["PODX_PRODUCT_LINE"].to_s.strip
+line = ENV["COCOAPODS_PODX_PRODUCT_LINE"].to_s.strip if line.empty?
+line = config["active_product_line"].to_s.strip if line.empty?
+line = config["product_line"].to_s.strip if line.empty?
+line = config["default_product_line"].to_s.strip if line.empty?
+line = config["default_line"].to_s.strip if line.empty?
+
+overlay = config["overlay_file"].to_s.strip
+product_lines = config["product_lines"]
+line_config = nil
+if !line.empty? && product_lines.is_a?(Hash)
+  line_config = product_lines[line]
+  line_config ||= product_lines.values.find do |item|
+    item.is_a?(Hash) && [item["id"], item["key"], item["project_id"]].map(&:to_s).include?(line)
+  end
+elsif !line.empty? && product_lines.is_a?(Array)
+  line_config = product_lines.find do |item|
+    item.is_a?(Hash) && [item["id"], item["key"], item["project_id"]].map(&:to_s).include?(line)
+  end
+end
+if line_config.is_a?(Hash)
+  overlay = line_config["overlay_file"].to_s.strip
+  overlay = line_config["PODX_OVERLAY_FILE"].to_s.strip if overlay.empty?
+end
+
+puts overlay.empty? ? "Podfile.overlay" : overlay
+RUBY
+}
+
+while :; do
+  case "$1" in
+    --line|--product-line)
+      if [ -z "${2:-}" ]; then
+        echo "[!] 缺少参数值：$1" >&2
+        exit 1
+      fi
+      export PODX_PRODUCT_LINE="$2"
+      shift 2
+      ;;
+    --line=*)
+      export PODX_PRODUCT_LINE="${1#--line=}"
+      shift
+      ;;
+    --product-line=*)
+      export PODX_PRODUCT_LINE="${1#--product-line=}"
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 cleanup_overlay_pods_dir() {
   [ -d "Pods" ] || return 0
@@ -1166,6 +1249,29 @@ case "$1" in
     ;;
   install)
     shift
+    while :; do
+      case "$1" in
+        --line|--product-line)
+          if [ -z "${2:-}" ]; then
+            echo "[!] 缺少参数值：$1" >&2
+            exit 1
+          fi
+          export PODX_PRODUCT_LINE="$2"
+          shift 2
+          ;;
+        --line=*)
+          export PODX_PRODUCT_LINE="${1#--line=}"
+          shift
+          ;;
+        --product-line=*)
+          export PODX_PRODUCT_LINE="${1#--product-line=}"
+          shift
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
     run_pod_install_with_auto_fix "$@"
     exit $?
     ;;

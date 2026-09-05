@@ -44,6 +44,7 @@ node /Users/renyang/工作/code/nncode/nnios/tools/cocoapods-podx-mcp/server.js
 每个工具都支持：
 
 - `projectDirectory`：可选，指定包含 `Podfile` 的工程目录。
+- `productLine`：可选，指定产品线 ID，例如 `nn`、`nnrtc`；等同命令行 `--line`。
 
 `mgit_status`、`mgit_branch`、`mgit_diff`、`mgit_pull`、`mgit_checkout`、`mgit_stash` 额外支持：
 
@@ -64,3 +65,12 @@ node /Users/renyang/工作/code/nncode/nnios/tools/cocoapods-podx-mcp/server.js
 `podx_update` 额外支持：
 
 - `pods`：可选，指定更新的 pod 名列表，例如 `["NNLibrary"]`。
+
+多产品线工程可以这样调用：
+
+```json
+{
+  "projectDirectory": "/Users/renyang/工作/code/nncode/nnios",
+  "productLine": "nnrtc"
+}
+```

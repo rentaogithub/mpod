@@ -211,8 +211,8 @@ module CocoapodsPodx
 
         @jenkins_project_config = begin
           if defined?(CocoapodsPodx::Runtime)
-            CocoapodsPodx::Runtime.configure(project_directory: jenkins_project_directory) if CocoapodsPodx::Runtime.respond_to?(:configure)
-            CocoapodsPodx::Runtime.project_config
+            CocoapodsPodx::Runtime.configure(project_directory: jenkins_project_directory, product_line: @product_line) if CocoapodsPodx::Runtime.respond_to?(:configure)
+            CocoapodsPodx::Runtime.config
           else
             {}
           end
@@ -1050,7 +1050,8 @@ module CocoapodsPodx
           return match[1] if match
         end
 
-        'nn'
+        configured = jenkins_project_config[:jenkins_job].to_s.strip
+        configured.empty? ? 'nn' : configured
       end
 
       def jenkins_parameter_definitions
@@ -1269,11 +1270,35 @@ module CocoapodsPodx
 
         return items unless File.exist?(podfile_path)
 
-        publish_private_repo_names.each do |name|
+        configured_items = if method(:publish_private_repo_names).owner == CocoapodsPodx::Commands::JenkinsPublish
+          publish_private_repo_items
+        else
+          []
+        end
+        if configured_items.empty?
+          publish_private_repo_names.each do |name|
+            items << {
+              repo: name,
+              branch: main_branch,
+              url: CocoapodsPodx::Runtime.remote_repo_url_for(name)
+            }
+          rescue => e
+            items << {
+              repo: name,
+              branch: main_branch,
+              url: nil,
+              error: e.message
+            }
+          end
+          return items
+        end
+
+        configured_items.each do |repo_item|
+          name = repo_item[:name]
           items << {
             repo: name,
             branch: main_branch,
-            url: CocoapodsPodx::Runtime.remote_repo_url_for(name)
+            url: repo_item[:url] || CocoapodsPodx::Runtime.remote_repo_url_for(name)
           }
         rescue => e
           items << {
@@ -1319,6 +1344,9 @@ module CocoapodsPodx
       end
 
       def publish_private_repo_names
+        items = publish_private_repo_items
+        return items.map { |item| item[:name] } unless items.empty?
+
         %w[
           NNBussCom
           NNApperance
@@ -1331,6 +1359,41 @@ module CocoapodsPodx
           NNBasciCommon
           NNIMManager
         ]
+      end
+
+      def publish_private_repo_items
+        repos = Array(jenkins_project_config[:publish_repos])
+        return [] if repos.empty?
+
+        main_repo = jenkins_project_config[:publish_main_repo].to_s.downcase
+        main_repo = git_repository_name.to_s.downcase if main_repo.empty?
+        repos.map do |repo|
+          item = publish_private_repo_item(repo)
+          next if item[:name].to_s.downcase == main_repo
+
+          item
+        end.compact
+      end
+
+      def publish_private_repo_item(repo)
+        if repo.is_a?(Hash)
+          name = repo[:name].to_s
+          url = repo[:url].to_s.strip
+          name = repo_name_from_url(url) if name.empty?
+          return { name: name, url: url.empty? ? nil : url }
+        end
+
+        text = repo.to_s.strip
+        if text.match?(%r{\A(?:https?|git@)})
+          { name: repo_name_from_url(text), url: text }
+        else
+          { name: text, url: nil }
+        end
+      end
+
+      def repo_name_from_url(url)
+        text = url.to_s.sub(%r{/+\z}, '')
+        File.basename(text).sub(/\.git\z/i, '')
       end
 
       def publish_git_row(name, path)
@@ -1595,7 +1658,10 @@ module CocoapodsPodx
           return jenkins_job_url_from_configured_url(jenkins_url)
         end
 
-        default_jenkins_job_url('nn')
+        configured_url = jenkins_project_config[:jenkins_url].to_s.strip
+        return jenkins_job_url_from_configured_url(configured_url) unless configured_url.empty?
+
+        default_jenkins_job_url(configured_jenkins_job_name)
       end
 
       def jenkins_job_url_from_configured_url(raw_url)
@@ -1610,7 +1676,9 @@ module CocoapodsPodx
           return normalize_jenkins_job_url(normalized_job)
         end
 
-        normalize_jenkins_job_url("http://10.1.2.175:8080/job/#{normalized_job}/")
+        base_url = jenkins_project_config[:jenkins_base_url].to_s.strip
+        base_url = 'http://10.1.2.175:8080' if base_url.empty?
+        normalize_jenkins_job_url("#{base_url.sub(%r{/+\z}, '')}/job/#{normalized_job}/")
       end
 
       def normalize_jenkins_job_url(raw_url)

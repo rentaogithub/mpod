@@ -1630,6 +1630,176 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal 'ios_semver', config[:publish_version][:build_number_strategy]
   end
 
+  def test_project_config_selects_default_product_line
+    File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
+      default_product_line: nnrtc
+      shared:
+        git_base_url: http://git.example.com
+      product_lines:
+        nn:
+          target_name: nn_ios
+          private_source: http://git.example.com/nn_ios/specs.git
+          overlay_file: Podfile.overlay.nn
+        nnrtc:
+          target_name: nnrtc_ios
+          private_source: http://git.example.com/nnrtc_ios/specs.git
+          overlay_file: Podfile.overlay.nnrtc
+          publish:
+            work_dir: .mgit-publish/nnrtc
+            base_branch: develop
+            main_repo: nnrtc-ios
+            repos:
+              - nnrtc-ios
+              - nnrtc-core
+            version:
+              type: ios_xcodeproj
+              branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$'
+              project_file: NNRtc.xcodeproj/project.pbxproj
+              build_number_strategy: ios_semver
+          jenkins:
+            base_url: http://jenkins.example.com
+            default_job: nnrtc-ios-build
+            repo_url: http://git.example.com/nnrtc_ios/nnrtc-ios.git
+    YAML
+
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
+    config = CocoapodsPodx::Runtime.config
+
+    assert_equal 'nnrtc', config[:product_line_id]
+    assert_equal 'nnrtc_ios', config[:target_name]
+    assert_equal 'http://git.example.com', config[:git_base_url]
+    assert_equal 'http://git.example.com/nnrtc_ios/specs.git', config[:private_source]
+    assert_equal File.join(@project_dir, 'Podfile.overlay.nnrtc'), CocoapodsPodx::Runtime.send(:overlay_path)
+    assert_equal '.mgit-publish/nnrtc', config[:publish_work_dir]
+    assert_equal ['nnrtc-ios', 'nnrtc-core'], config[:publish_repos]
+    assert_equal 'nnrtc-ios-build', config[:jenkins_job]
+    assert_equal 'http://jenkins.example.com', config[:jenkins_base_url]
+  ensure
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
+  end
+
+  def test_project_config_selects_product_line_from_env
+    previous = ENV['PODX_PRODUCT_LINE']
+    ENV['PODX_PRODUCT_LINE'] = 'nn'
+    File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
+      default_product_line: nnrtc
+      product_lines:
+        nn:
+          target_name: nn_ios
+          private_source: http://git.example.com/nn_ios/specs.git
+          git_base_url: http://git.example.com
+        nnrtc:
+          target_name: nnrtc_ios
+          private_source: http://git.example.com/nnrtc_ios/specs.git
+          git_base_url: http://git.example.com
+    YAML
+
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
+
+    assert_equal 'nn', CocoapodsPodx::Runtime.config[:product_line_id]
+    assert_equal 'nn_ios', CocoapodsPodx::Runtime.config[:target_name]
+  ensure
+    if previous.nil?
+      ENV.delete('PODX_PRODUCT_LINE')
+    else
+      ENV['PODX_PRODUCT_LINE'] = previous
+    end
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
+  end
+
+  def test_project_config_maps_platform_export_keys
+    File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
+      default_product_line: alpha
+      product_lines:
+        - id: alpha
+          key: alpha
+          name: Alpha
+          project_id: alpha-ios
+          bundle_id: com.example.alpha
+          PODX_TARGET_NAME: alpha_ios
+          PODX_PRIVATE_SOURCE: http://git.example.com/alpha/specs.git
+          PODX_GIT_BASE_URL: http://git.example.com
+          PODX_OVERLAY_FILE: Podfile.overlay.alpha
+          PODX_PUBLISH_REPOS: "alpha-ios, alpha-core"
+          JENKINS_BASE_URL: http://jenkins-alpha.example.com
+          JENKINS_NN_JOB: alpha/app-build
+          JENKINS_NN_REPO_URL: http://git.example.com/alpha/alpha-ios.git
+    YAML
+
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
+    config = CocoapodsPodx::Runtime.config
+
+    assert_equal 'alpha', config[:product_line_id]
+    assert_equal 'alpha_ios', config[:target_name]
+    assert_equal 'http://git.example.com/alpha/specs.git', config[:private_source]
+    assert_equal File.join(@project_dir, 'Podfile.overlay.alpha'), CocoapodsPodx::Runtime.send(:overlay_path)
+    assert_equal ['alpha-ios', 'alpha-core'], config[:publish_repos]
+    assert_equal 'http://jenkins-alpha.example.com', config[:jenkins_base_url]
+    assert_equal 'alpha/app-build', config[:jenkins_job]
+    assert_equal 'http://git.example.com/alpha/alpha-ios.git', config[:jenkins_repo_url]
+  ensure
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
+  end
+
+  def test_product_line_nested_config_overrides_legacy_flat_config
+    File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
+      default_product_line: nnrtc
+      publish_work_dir: .mgit-publish/legacy
+      publish_repos:
+        - legacy-ios
+      publish_pipeline_gate: false
+      jenkins_job: legacy-build
+      product_lines:
+        nnrtc:
+          target_name: nnrtc_ios
+          private_source: http://git.example.com/nnrtc_ios/specs.git
+          git_base_url: http://git.example.com
+          publish:
+            work_dir: .mgit-publish/nnrtc
+            pipeline_gate: true
+            repos:
+              - nnrtc-ios
+          jenkins:
+            default_job: nnrtc-build
+    YAML
+
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
+    config = CocoapodsPodx::Runtime.config
+
+    assert_equal '.mgit-publish/nnrtc', config[:publish_work_dir]
+    assert_equal ['nnrtc-ios'], config[:publish_repos]
+    assert_equal true, config[:publish_pipeline_gate]
+    assert_equal 'nnrtc-build', config[:jenkins_job]
+  ensure
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
+  end
+
+  def test_mgit_standalone_accepts_product_line_global_option
+    File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
+      default_product_line: nn
+      product_lines:
+        nn:
+          target_name: nn_ios
+          private_source: http://git.example.com/nn_ios/specs.git
+          git_base_url: http://git.example.com
+        nnrtc:
+          target_name: nnrtc_ios
+          private_source: http://git.example.com/nnrtc_ios/specs.git
+          git_base_url: http://git.example.com
+          overlay_file: Podfile.overlay.nnrtc
+    YAML
+
+    Dir.chdir(@project_dir) do
+      command = CocoapodsPodx::MgitStandalone.new(['--line', 'nnrtc', 'status'])
+
+      assert command.instance_variable_get(:@status_mode)
+      assert_equal 'nnrtc', CocoapodsPodx::Runtime.config[:product_line_id]
+      assert_equal File.join(File.realpath(@project_dir), 'Podfile.overlay.nnrtc'), command.send(:overlay_path)
+    end
+  ensure
+    CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
+  end
+
   def test_runtime_prefers_podx_config
     assert_equal File.join(@project_dir, 'podx.config.yml'), CocoapodsPodx::Runtime.send(:config_path)
   end
@@ -6078,6 +6248,29 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
+  def test_pipeline_runtime_policy_uses_selected_product_line_config
+    project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-product-line')
+    File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
+      default_product_line: nn
+      product_lines:
+        nn:
+          publish_pipeline_gate: false
+        nnrtc:
+          publish_pipeline_gate: true
+          publish_pipeline_gate_strategy:
+            pgyer: off
+            testflight: strict
+    YAML
+    helper = pipeline_runtime_helper(project_dir, ['policy'], product_line: 'nnrtc')
+
+    rows = helper.pipeline_policy_rows
+
+    assert_equal 'off', rows.find { |row| row[0] == '蒲公英' }[1]
+    assert_equal 'strict', rows.find { |row| row[0] == 'TestFlight' }[1]
+  ensure
+    FileUtils.rm_rf(project_dir) if project_dir
+  end
+
   def test_pipeline_runtime_policy_is_off_when_publish_gate_disabled
     project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-policy-off')
     File.write(File.join(project_dir, 'podx.config.yml'), "publish_pipeline_gate: false\n")
@@ -6332,20 +6525,21 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
-  def pipeline_runtime_helper(project_dir, pod_names)
+  def pipeline_runtime_helper(project_dir, pod_names, product_line: nil)
     Class.new do
       include CocoapodsPodx::Commands::GitActions
       include CocoapodsPodx::Commands::PipelineRuntime
 
-      def initialize(project_dir, pod_names)
+      def initialize(project_dir, pod_names, product_line)
         @project_directory = project_dir
         @pod_names = pod_names
+        @product_line = product_line
       end
 
       def project_directory
         @project_directory
       end
-    end.new(project_dir, pod_names)
+    end.new(project_dir, pod_names, product_line)
   end
 
   def rules_command_helper(project_dir)

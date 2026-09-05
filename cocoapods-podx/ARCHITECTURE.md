@@ -364,7 +364,6 @@ tools/cocoapods-podx.sh publish
 
 职责：
 
-- 校验发布密码
 - 更新 gemspec 版本
 - 本地构建 gem
 - 上传到 Nexus raw 仓库

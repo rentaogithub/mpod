@@ -169,7 +169,7 @@ module CocoapodsPodx
           project = Xcodeproj::Project.open(project_path)
           return if overlay_file_reference_exists?(project)
 
-          project.main_group.new_file(OVERLAY_PROJECT_FILE_NAME)
+          project.main_group.new_file(overlay_project_file_name)
           project.save
           Pod::UI.puts "Podfile.overlay [xcodeproj] #{File.basename(project_path)}"
         rescue LoadError
@@ -189,9 +189,22 @@ module CocoapodsPodx
       end
 
       def overlay_file_reference_exists?(project)
+        name = overlay_project_file_name
         project.files.any? do |file|
-          file.path == OVERLAY_PROJECT_FILE_NAME || file.display_name == OVERLAY_PROJECT_FILE_NAME
+          file.path == name || file.display_name == File.basename(name)
         end
+      end
+
+      def overlay_project_file_name
+        return OVERLAY_PROJECT_FILE_NAME unless respond_to?(:overlay_path, true)
+        return OVERLAY_PROJECT_FILE_NAME unless respond_to?(:project_directory, true)
+
+        path = File.expand_path(overlay_path)
+        project_root = File.expand_path(project_directory)
+        prefix = "#{project_root}/"
+        path.start_with?(prefix) ? path.delete_prefix(prefix) : File.basename(path)
+      rescue
+        OVERLAY_PROJECT_FILE_NAME
       end
 
     end

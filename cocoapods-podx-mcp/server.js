@@ -107,6 +107,10 @@ function projectSchema(extraProperties = {}, required = []) {
         type: "string",
         description: "Podfile 工程目录，默认使用当前目录向上查找。"
       },
+      productLine: {
+        type: "string",
+        description: "可选产品线 ID，例如 nn、nnrtc；等同命令行 --line。"
+      },
       ...extraProperties
     },
     required,
@@ -263,29 +267,31 @@ async function callTool(name, args) {
   const pods = Array.isArray(args.pods) ? args.pods.filter(Boolean) : [];
   const maxOutput = Number(args.maxOutput) > 0 ? Number(args.maxOutput) : DEFAULT_MAX_OUTPUT;
   const repoUpdate = args.repoUpdate === true ? ["--repo-update"] : [];
+  const productLine = typeof args.productLine === "string" ? args.productLine.trim() : "";
+  const productLineArgs = productLine ? ["--line", productLine] : [];
 
   switch (name) {
     case "podx_doctor":
-      return commandTool(projectDirectory, "podx", ["doctor"], maxOutput);
+      return commandTool(projectDirectory, "podx", [...productLineArgs, "doctor"], maxOutput);
     case "podx_main":
-      return commandTool(projectDirectory, "podx", ["main"], maxOutput);
+      return commandTool(projectDirectory, "podx", [...productLineArgs, "main"], maxOutput);
     case "mgit_status":
-      return commandTool(projectDirectory, "mgit", ["status", ...repos], maxOutput);
+      return commandTool(projectDirectory, "mgit", [...productLineArgs, "status", ...repos], maxOutput);
     case "mgit_branch":
-      return commandTool(projectDirectory, "mgit", ["branch", ...repos], maxOutput);
+      return commandTool(projectDirectory, "mgit", [...productLineArgs, "branch", ...repos], maxOutput);
     case "mgit_diff":
-      return commandTool(projectDirectory, "mgit", ["diff", ...repos], maxOutput);
+      return commandTool(projectDirectory, "mgit", [...productLineArgs, "diff", ...repos], maxOutput);
     case "podx_install":
-      return commandTool(projectDirectory, "podx", ["install", ...repoUpdate], maxOutput);
+      return commandTool(projectDirectory, "podx", [...productLineArgs, "install", ...repoUpdate], maxOutput);
     case "podx_update":
-      return commandTool(projectDirectory, "podx", ["update", ...pods, ...repoUpdate], maxOutput);
+      return commandTool(projectDirectory, "podx", [...productLineArgs, "update", ...pods, ...repoUpdate], maxOutput);
     case "mgit_pull":
-      return commandTool(projectDirectory, "mgit", ["pull", ...repos], maxOutput);
+      return commandTool(projectDirectory, "mgit", [...productLineArgs, "pull", ...repos], maxOutput);
     case "mgit_checkout":
       if (!args.branch) return toolError("mgit_checkout 需要传入 branch。");
-      return commandTool(projectDirectory, "mgit", ["checkout", ...repos, args.branch], maxOutput);
+      return commandTool(projectDirectory, "mgit", [...productLineArgs, "checkout", ...repos, args.branch], maxOutput);
     case "mgit_stash":
-      return commandTool(projectDirectory, "mgit", ["stash", ...repos], maxOutput);
+      return commandTool(projectDirectory, "mgit", [...productLineArgs, "stash", ...repos], maxOutput);
     default:
       return toolError(`未知工具：${name}`);
   }

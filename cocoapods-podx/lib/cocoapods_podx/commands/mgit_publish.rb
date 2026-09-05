@@ -575,7 +575,15 @@ module CocoapodsPodx
 
       def default_mgit_publish_repo_url(name, base_url)
         main_remote = respond_to?(:git_remote_url, true) ? git_remote_url : nil
-        name == 'nnios' ? (main_remote || "#{base_url}/#{name}.git") : "#{base_url}/#{name}.git"
+        main_repo = mgit_publish_config[:main_repo].to_s
+        configured_main_remote = CocoapodsPodx::Runtime.config[:jenkins_repo_url].to_s.strip
+        if name == 'nnios' || (!main_repo.empty? && name.to_s == main_repo)
+          return configured_main_remote unless configured_main_remote.empty?
+
+          return main_remote || "#{base_url}/#{name}.git"
+        end
+
+        "#{base_url}/#{name}.git"
       end
     end
   end

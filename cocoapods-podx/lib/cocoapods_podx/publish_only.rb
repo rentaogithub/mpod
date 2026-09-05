@@ -30,7 +30,9 @@ module CocoapodsPodx
       @project_directory = Dir.pwd
       @pod_names = []
       @dry_run = false
-      parse_arguments(argv)
+      args = argv.dup
+      @product_line = extract_product_line_option!(args)
+      parse_arguments(args)
     end
 
     def run
@@ -68,8 +70,37 @@ module CocoapodsPodx
     def configure_runtime!
       return if @runtime_configured
 
-      CocoapodsPodx::Runtime.configure(project_directory: project_directory)
+      CocoapodsPodx::Runtime.configure(project_directory: project_directory, product_line: @product_line)
       @runtime_configured = true
+    end
+
+    def extract_product_line_option!(argv)
+      product_line = nil
+      filtered = []
+      index = 0
+
+      while index < argv.length
+        arg = argv[index].to_s
+        if arg == '--line' || arg == '--product-line'
+          value = argv[index + 1].to_s.strip
+          raise Pod::Informative, "缺少参数值：#{arg}" if value.empty?
+
+          product_line = value
+          index += 2
+        elsif arg.start_with?('--line=')
+          product_line = arg.sub(/\A--line=/, '').strip
+          index += 1
+        elsif arg.start_with?('--product-line=')
+          product_line = arg.sub(/\A--product-line=/, '').strip
+          index += 1
+        else
+          filtered << argv[index]
+          index += 1
+        end
+      end
+
+      argv.replace(filtered)
+      product_line
     end
 
     def parse_arguments(argv)

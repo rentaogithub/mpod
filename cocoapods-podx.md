@@ -156,6 +156,53 @@ mgit dry-run commit              # 预览哪些仓库会被组合提交，不执
 
 日常使用 `podx` 和 `mgit` 即可。
 
+## 多产品线配置
+
+多产品线由 `nn-ios-platform` 维护产品线身份、仓库、Jenkins 和发布参数；`podx`、`mgit` 只消费当前选中的有效配置并在本机执行。这样平台侧可以统一管理产品线，CLI 侧保持轻量、可离线、兼容旧工程。
+
+产品线选择优先级：
+
+1. 命令参数：`--line` 或 `--product-line`
+2. 环境变量：`PODX_PRODUCT_LINE`
+3. 兼容环境变量：`COCOAPODS_PODX_PRODUCT_LINE`
+4. `podx.config.yml` 中的 `active_product_line`、`product_line`、`default_product_line` 或 `default_line`
+
+`nn-ios-tools` 仍兼容 `product_lines` 聚合配置，便于历史工程迁移；但在当前平台流程里，同一个主工程只对应一个产品线。新工程或平台托管工程建议由 `nn-ios-platform` 直接同步扁平单产品线配置到主工程根目录：
+
+```yaml
+product_line: nnrtc
+target_name: nnrtc_ios
+private_source: http://git.example.com/nnrtc_ios/nnspec.git
+git_base_url: http://git.example.com
+overlay_file: Podfile.overlay
+publish_work_dir: .mgit-publish/nnrtc
+publish_base_branch: develop
+publish_pipeline_gate: false
+publish_main_repo: nnrtc-ios
+publish_repos:
+  - nnrtc-ios
+  - nnrtc-core
+jenkins_base_url: http://jenkins.example.com
+jenkins_job: nnrtc-ios-build
+jenkins_repo_url: http://git.example.com/nnrtc_ios/nnrtc-ios.git
+```
+
+常用方式：
+
+```bash
+podx install
+podx publish app --branch release/1.8.0
+mgit status
+mgit publish release/1.8.0
+pod install --no-repo-update
+```
+
+和 `nn-ios-platform` 集成时，平台侧推荐做三件事：
+
+1. 在产品线配置中保存非敏感 CLI 配置：`target_name`、`private_source`、`git_base_url`、`publish`、`jenkins`。
+2. 保存后由平台直接同步 `podx.config.yml` 到该产品线对应主工程仓库根目录，并把当前产品线写入 `product_line`。
+3. 平台的 git/发布接口按当前产品线读取仓库列表，避免继续使用硬编码默认仓库集合。
+
 ## 发布
 
 `podx publish` 不打包本地未提交代码。未指定 `--branch` 时，只读取当前主工程 git 分支名，并以 `origin/<当前分支>` 传给发布服务，实际打包的是远端分支 HEAD。
@@ -185,7 +232,7 @@ mgit dry-run publish release/5.14.2
 mgit publish release/5.14.2
 ```
 
-`mgit publish` 默认从 `develop` 创建或更新目标分支，并推送 `podx.config.yml` 中 `publish_repos` 声明的仓库。默认工作目录是主工程下的 `.mgit-publish`。
+`mgit publish` 默认从 `develop` 创建或更新目标分支，并推送当前产品线有效配置中的 `publish_repos` 声明仓库。默认工作目录是主工程下的 `.mgit-publish`；平台同步的主工程可使用 `.mgit-publish/<product_line>` 这类固定目录，避免和其他工程的发布工作目录混用。
 
 默认情况下，`mgit publish` 只做通用多仓库分支发布，不会修改 `Podfile`，也不会修改 Xcode 版本号。只有显式配置 `publish_main_repo`、`publish_update_podfile_branch` 和 `publish_version.type: ios_xcodeproj` 后，才会开启 iOS 工程定制动作。
 

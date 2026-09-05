@@ -13,7 +13,6 @@ GEMSPEC_PATH="$PLUGIN_DIR/cocoapods-podx.gemspec"
 NEXUS_GEM_SOURCE="${COCOAPODS_PODX_GEM_SOURCE:-${COCOAPODS_OVERLAY_GEM_SOURCE:-http://172.31.4.4:9091/repository/nn_ios/rubygems/cocoapods-podx/}}"
 NEXUS_USER="${COCOAPODS_PODX_NEXUS_USER:-${COCOAPODS_OVERLAY_NEXUS_USER:-admin}}"
 NEXUS_PASSWORD="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSWORD:-admin123}}"
-PUBLISH_PASSWORD="${COCOAPODS_PODX_PUBLISH_PASSWORD:-${COCOAPODS_OVERLAY_PUBLISH_PASSWORD:-admin123}}"
 REQUESTED_VERSION="${1:-${COCOAPODS_PODX_VERSION:-${COCOAPODS_OVERLAY_VERSION:-}}}"
 
 detect_ruby_bin() {
@@ -42,14 +41,6 @@ RUBY_BIN="$(detect_ruby_bin)"
 GEM_BIN="${COCOAPODS_PODX_GEM_BIN:-$(dirname "$RUBY_BIN")/gem}"
 if [ ! -x "$GEM_BIN" ]; then
   GEM_BIN="$(command -v gem)"
-fi
-
-printf "请输入发布密码: "
-read -r INPUT_PUBLISH_PASSWORD
-
-if [ "$INPUT_PUBLISH_PASSWORD" != "$PUBLISH_PASSWORD" ]; then
-  echo "发布密码错误，已取消。"
-  exit 1
 fi
 
 if [ ! -f "$GEMSPEC_PATH" ]; then
