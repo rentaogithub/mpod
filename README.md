@@ -150,6 +150,19 @@ mgit branch
 
 安装脚本会优先安装到当前 CocoaPods 使用的 RubyGems 环境。没有 CocoaPods 的机器会进入 publish-only 模式，仍可使用 `podx publish --job ...`、`podx ai ...` 和 `mgit ...`。
 
+gem 的 `bin/podx`、`bin/mgit` 是纳入版本控制的 Ruby 启动器，由它们调用 `lib/cocoapods_podx/shims/` 下的 Shell 实现。构建时不要用 Shell 模板覆盖 `bin/`，否则 RubyGems 生成的入口会把 Shell 当作 Ruby 加载，导致 `SyntaxError`。安装和升级脚本需要复制 Shell 快捷命令时，应读取 `lib/cocoapods_podx/shims/`。
+
+旧版升级脚本可能把 Ruby 启动器直接复制到命令目录。此时启动器会从自身目录和 `pod` 的安装位置识别 gem 环境，兼容 `PATH` 优先使用系统 Ruby、插件安装在另一套 Ruby 中的情况。
+
+修改入口、安装或发布逻辑后，在仓库根目录运行回归测试：
+
+```bash
+ruby cocoapods-podx/test/test_executables.rb
+ruby cocoapods-podx/test/test_runtime.rb
+```
+
+入口测试在临时目录中构建、安装和升级 gem，使用本地下载替身验证发布流程，不访问 Nexus；也覆盖清空 `GEM_HOME/GEM_PATH`、由系统 Ruby 启动旧版升级所复制入口的场景。
+
 ## 主工程初始化
 
 1. 在主 `Podfile` 中引入：

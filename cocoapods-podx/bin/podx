@@ -1,0 +1,32 @@
+#!/usr/bin/env ruby
+
+require 'rubygems'
+
+root = File.expand_path('..', __dir__)
+shim = File.join(root, 'lib', 'cocoapods_podx', 'shims', 'podx')
+unless File.file?(shim)
+  # Older installers copy this launcher outside the gem; PATH may select another Ruby.
+  gem_homes = [root, ENV['GEM_HOME']]
+  pod_paths = [File.join(__dir__, 'pod')]
+  pod_paths.concat(ENV.fetch('PATH', '').split(File::PATH_SEPARATOR).map { |dir| File.join(dir, 'pod') })
+  pod_path = pod_paths.find { |path| File.file?(path) && File.executable?(path) }
+  if pod_path
+    [pod_path, File.realpath(pod_path)].uniq.each do |path|
+      gem_homes << File.expand_path('..', File.dirname(path))
+      gem_homes << File.read(path, 4096)[/^\s*(?:export\s+)?GEM_HOME=["']([^"']+)["']/, 1]
+    end
+  end
+  gem_home = gem_homes.compact.find do |path|
+    !Dir.glob(File.join(path, 'specifications', 'cocoapods-podx-*.gemspec')).empty?
+  end
+  if gem_home
+    ENV['GEM_HOME'] = gem_home
+    ENV['GEM_PATH'] = [gem_home, ENV['GEM_PATH']].compact.join(File::PATH_SEPARATOR)
+    Gem.clear_paths
+  end
+  root = Gem::Specification.find_by_name('cocoapods-podx').full_gem_path
+  shim = File.join(root, 'lib', 'cocoapods_podx', 'shims', 'podx')
+end
+
+ENV['COCOAPODS_PODX_COMMAND_DIR'] ||= File.dirname(File.expand_path($PROGRAM_NAME))
+exec '/bin/sh', shim, *ARGV

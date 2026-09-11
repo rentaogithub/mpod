@@ -68,7 +68,8 @@ lib/pod/command/podx.rb
 `podx` 是给日常使用者的增强入口，定义在：
 
 ```text
-bin/podx
+bin/podx                            # RubyGems 可加载的 Ruby 启动器
+lib/cocoapods_podx/shims/podx         # Shell 命令实现
 ```
 
 它把用户友好的命令转换为插件内部动作或原生 `pod`：
@@ -91,7 +92,8 @@ podx install          -> pod install
 `mgit` 是多仓库 git 入口，定义在：
 
 ```text
-bin/mgit
+bin/mgit                            # RubyGems 可加载的 Ruby 启动器
+lib/cocoapods_podx/shims/mgit         # Shell 命令实现
 ```
 
 它把组合 git 命令转换为插件内部动作：
@@ -106,7 +108,7 @@ mgit publish release/5.14.2 -> 创建或更新多仓库发布分支
 ```
 
 `mgit` 只承载多仓库 git 语义，不承载 CocoaPods 依赖安装语义。
-`bin/mgit` 始终直接进入 `cocoapods_podx/mgit_standalone`，不再通过 `pod podx` 转发，避免不同机器的 CocoaPods / RubyGems 环境影响 `mgit`。
+`bin/mgit` 通过 Shell 实现进入 `cocoapods_podx/mgit_standalone`，不再通过 `pod podx` 转发，避免不同机器的 CocoaPods / RubyGems 环境影响 `mgit`。
 当前支持 branch、checkout、merge、stash、status、diff、log、add、pull、push、commit、publish。
 
 ## Runtime 层
@@ -281,8 +283,8 @@ lib/cocoapods_podx/shim_generator.rb
 
 职责：
 
-- 读取 `bin/podx`
-- 读取 `bin/mgit`
+- 读取 `lib/cocoapods_podx/shims/podx`
+- 读取 `lib/cocoapods_podx/shims/mgit`
 - 给安装脚本统一生成快捷命令
 
 这样 `podx`、`mgit` 的模板只维护一份，不会在 `Pod::Command::Podx`、安装脚本中重复。
@@ -375,13 +377,13 @@ Nexus 删除旧包是运维动作，不放进插件项目代码。需要清理�
 ### 新增 podx 命令
 
 1. 优先判断是否和原生 `pod` 命令冲突。
-2. 如果是插件增强能力，在 `bin/podx` 中映射到插件内部动作。
+2. 如果是插件增强能力，在 `lib/cocoapods_podx/shims/podx` 中映射到插件内部动作。
 3. 如果逻辑超过少量分发代码，在 `lib/cocoapods_podx/commands/` 下新增模块。
 4. `Pod::Command::Podx` 只加参数解析和分发。
 
 ### 新增 mgit 命令
 
-1. 在 `bin/mgit` 中映射参数。
+1. 在 `lib/cocoapods_podx/shims/mgit` 中映射参数。
 2. 普通组合 git 动作放到 `GitActions`。
 3. 发布分支类动作放到 `MgitPublish` 或新模块。
 4. 避免支持破坏性命令，例如 `reset --hard`，除非有明确保护和二次确认。
@@ -426,8 +428,9 @@ test/test_runtime.rb
 
 建议后续补充：
 
-- `bin/podx` 参数映射测试
-- `bin/mgit` 参数映射测试
+- `lib/cocoapods_podx/shims/podx` 参数映射测试
+- `lib/cocoapods_podx/shims/mgit` 参数映射测试
+- `test/test_executables.rb` 验证 gem 入口、安装、重新安装、升级及发布打包
 - `mgit publish --push-mode skip` 的 fixture 测试
 - Jenkins HTTP 行为使用 fake server 测试
 

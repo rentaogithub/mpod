@@ -338,8 +338,10 @@ upgrade_cocoapods_podx() {
   installed_dir="$(GEM_HOME="$gem_home" GEM_PATH="$gem_home" "$ruby_bin" -e 'spec = Gem::Specification.find_all_by_name("cocoapods-podx").max_by(&:version); puts spec.full_gem_path')"
   command_dir="${COCOAPODS_PODX_COMMAND_DIR:-$(dirname "$0")}"
   if [ -w "$command_dir" ]; then
-    install_upgrade_shim "$installed_dir/bin/podx" "$command_dir/podx"
-    install_upgrade_shim "$installed_dir/bin/mgit" "$command_dir/mgit"
+    shim_dir="$installed_dir/lib/cocoapods_podx/shims"
+    [ -f "$shim_dir/podx" ] || shim_dir="$installed_dir/bin"
+    install_upgrade_shim "$shim_dir/podx" "$command_dir/podx"
+    install_upgrade_shim "$shim_dir/mgit" "$command_dir/mgit"
   else
     echo "Warning: 无法刷新命令 shim：$command_dir 不可写" >&2
   fi
@@ -356,7 +358,7 @@ exec_upgrade_from_temp_shim() {
   tmp_shim="$tmp_dir/podx"
   cp "$0" "$tmp_shim"
   chmod +x "$tmp_shim"
-  COCOAPODS_PODX_COMMAND_DIR="$(dirname "$0")" \
+  COCOAPODS_PODX_COMMAND_DIR="${COCOAPODS_PODX_COMMAND_DIR:-$(dirname "$0")}" \
   COCOAPODS_PODX_SELF_UPGRADE_DIR="$tmp_dir" \
   exec "$tmp_shim" __upgrade "$current_version" "$target_version"
 }
@@ -1326,7 +1328,7 @@ case "$1" in
     shift
     upgrade_cocoapods_podx "$(current_podx_version)" "$COCOAPODS_PODX_INIT_VERSION" || exit $?
     if [ "${COCOAPODS_PODX_UPGRADED:-0}" = "1" ]; then
-      exec "$0" init "$@"
+      exec "${COCOAPODS_PODX_COMMAND_DIR:-$(dirname "$0")}/podx" init "$@"
     fi
     run_pod_overlay --init "$@"
     ;;
@@ -1334,7 +1336,7 @@ case "$1" in
     shift
     upgrade_cocoapods_podx "$(current_podx_version)" "$COCOAPODS_PODX_SYNC_VERSION" || exit $?
     if [ "${COCOAPODS_PODX_UPGRADED:-0}" = "1" ]; then
-      exec "$0" sync "$@"
+      exec "${COCOAPODS_PODX_COMMAND_DIR:-$(dirname "$0")}/podx" sync "$@"
     fi
     run_pod_overlay --sync "$@"
     ;;
