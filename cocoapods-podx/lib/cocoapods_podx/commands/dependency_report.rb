@@ -240,7 +240,7 @@ module CocoapodsPodx
           group_name = definition[:group_name]
           specs[name] = { branch: branch }
           specs[dependency_raw_name(name)] ||= { branch: branch }
-          specs[group_name] ||= { branch: branch } if group_name && group_name != 'nn_ios'
+          specs[group_name] ||= { branch: branch } if group_name && group_name != 'app_ios'
         end
         specs
       end

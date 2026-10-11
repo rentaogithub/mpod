@@ -97,9 +97,9 @@ module CocoapodsPodx
         assign_first_present!(config, :publish_main_repo, :PODX_PUBLISH_MAIN_REPO, :podx_publish_main_repo)
         assign_first_present!(config, :publish_repos, :PODX_PUBLISH_REPOS, :podx_publish_repos)
         assign_first_present!(config, :jenkins_base_url, :JENKINS_BASE_URL, :jenkins_base_url)
-        assign_first_present!(config, :jenkins_job, :JENKINS_NN_JOB, :jenkins_nn_job)
-        assign_first_present!(config, :jenkins_quality_job, :JENKINS_NN_QA_JOB, :jenkins_nn_qa_job)
-        assign_first_present!(config, :jenkins_repo_url, :JENKINS_NN_REPO_URL, :jenkins_nn_repo_url)
+        assign_first_present!(config, :jenkins_job, :PODX_JENKINS_JOB, :podx_jenkins_job)
+        assign_first_present!(config, :jenkins_quality_job, :PODX_JENKINS_QUALITY_JOB, :podx_jenkins_quality_job)
+        assign_first_present!(config, :jenkins_repo_url, :PODX_JENKINS_REPO_URL, :podx_jenkins_repo_url)
       end
 
       def flatten_nested_config!(config)

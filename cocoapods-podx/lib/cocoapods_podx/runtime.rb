@@ -94,7 +94,7 @@ module CocoapodsPodx
 
       def local_repo_folder_name_for(name)
         definition = managed_pod_definition(name) || {}
-        identifier = if definition[:group_name] && definition[:group_name] != target_name && definition[:group_name] != 'nn_ios'
+        identifier = if definition[:group_name] && definition[:group_name] != target_name && definition[:group_name] != 'app_ios'
           definition[:group_name]
         else
           raw_pod_name(name)
@@ -155,7 +155,7 @@ module CocoapodsPodx
         options.reject { |key, _| MANAGED_OPTION_KEYS.include?(key) }
       end
 
-      def overlay_pod(name:, group_name: 'nn_ios', tag: '', branch: nil, custom_git_target: nil, remote_name: nil, local_name: nil, configurations: [], inhibit_warnings: false)
+      def overlay_pod(name:, group_name: 'app_ios', tag: '', branch: nil, custom_git_target: nil, remote_name: nil, local_name: nil, configurations: [], inhibit_warnings: false)
         ensure_configured!
 
         declared_branch = branch
@@ -233,7 +233,7 @@ module CocoapodsPodx
 
         names = []
         managed_pod_definitions.each do |name, definition|
-          if definition[:group_name] && definition[:group_name] != target_name && definition[:group_name] != 'nn_ios'
+          if definition[:group_name] && definition[:group_name] != target_name && definition[:group_name] != 'app_ios'
             names << definition[:group_name]
           else
             names << name
@@ -380,7 +380,7 @@ module CocoapodsPodx
       def overlay_config_for(name:, group_name:)
         config = overlay_pod_config(name)
         return config unless config.nil?
-        return nil if group_name.nil? || group_name == 'nn_ios' || group_name == target_name
+        return nil if group_name.nil? || group_name == 'app_ios' || group_name == target_name
 
         overlay_pod_config(group_name)
       end
@@ -575,7 +575,7 @@ module CocoapodsPodx
         definition = managed_pod_definition(raw_name) || {}
         return definition[:local_name] if definition[:local_name]
 
-        if group_name == 'nn_ios' || group_name == target_name
+        if group_name == 'app_ios' || group_name == target_name
           raw_name.downcase
         else
           group_name.downcase
@@ -586,7 +586,7 @@ module CocoapodsPodx
         base = git_base_url
         raise 'overlay 配置缺少 git_base_url' if base.nil? || base.empty?
 
-        if group_name == 'nn_ios' || group_name == target_name
+        if group_name == 'app_ios' || group_name == target_name
           "#{base}/#{group_name}/#{raw_name.downcase}.git"
         elsif custom_git_target.nil?
           "#{base}/#{target_name}/#{group_name.downcase}.git"
@@ -780,7 +780,8 @@ module CocoapodsPodx
       end
 
       def is_jenkins
-        File.directory?('/Users/aaa/ios_build_pods')
+        build_pods_dir = ENV['COCOAPODS_PODX_JENKINS_PODS_DIR'].to_s.strip
+        !build_pods_dir.empty? && File.directory?(build_pods_dir)
       end
 
       def jenkins_local_pod(name)

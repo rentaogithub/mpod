@@ -41,7 +41,7 @@ flowchart TB
   Runtime --> DevPods["Development Pods/<br/>本地组件仓库"]
 
   Runtime --> GitServer["Git 服务<br/>私有组件远端仓库"]
-  JenkinsPublish --> Jenkins["Jenkins<br/>nn / nnrtc-ios-build"]
+  JenkinsPublish --> Jenkins["Jenkins<br/>app / media-ios-build"]
   Tools["tools/cocoapods-podx.sh"] --> Nexus["Nexus RubyGems<br/>cocoapods-podx gem"]
   Tools --> ShimGenerator
 ```
@@ -55,19 +55,19 @@ flowchart TB
 | Runtime 层 | `lib/cocoapods_podx/runtime.rb` | 读取配置，解析内部组件，决定本地 `:path` 或远端 `:git/:branch` |
 | 功能模块层 | `commands/*.rb` | 拆分 overlay 文件、组合 git、Jenkins 发布、多仓库发布分支 |
 | 安装发布层 | `tools/cocoapods-podx.sh`、`install/uninstall/publish` 脚本 | 从 Nexus 安装、升级、卸载、发布 gem，生成命令 shim |
-| AI 集成层 | `nn-ios-tools/cocoapods-podx-mcp/server.js` | 给 Codex 暴露受控的 `podx` / `mgit` 工具；不需要放在主工程目录下 |
+| AI 集成层 | `podx-tools/cocoapods-podx-mcp/server.js` | 给 Codex 暴露受控的 `podx` / `mgit` 工具；不需要放在主工程目录下 |
 
 ## 能力集
 
 | 能力分类 | 命令 | 说明 |
 | --- | --- | --- |
-| 官方 pod 命令 | `podx install`、`podx repo update`、`podx update NNBussCom` | 保持 CocoaPods 原生命令语义；`podx update` 会在命中本地 overlay 组件时先更新本地仓库 |
+| 官方 pod 命令 | `podx install`、`podx repo update`、`podx update AppFeatureKit` | 保持 CocoaPods 原生命令语义；`podx update` 会在命中本地 overlay 组件时先更新本地仓库 |
 | 工程初始化 | `podx init` | 先升级到远端最新插件，再一键初始化工程配置、团队规则、技能库、流程产物、AI 上下文和 Git hooks |
 | 团队基线同步 | `podx sync` | 先升级到远端最新插件，再把团队规则、skill、pipeline 和 AI 模板同步到当前工程 |
-| 本地/远端切换 | `podx NNBussCom`、`podx disable NNBussCom`、`podx disable` | 管理 `Podfile.overlay`，决定私有组件走本地源码还是远端仓库 |
+| 本地/远端切换 | `podx AppFeatureKit`、`podx disable AppFeatureKit`、`podx disable` | 管理 `Podfile.overlay`，决定私有组件走本地源码还是远端仓库 |
 | Overlay 查询 | `podx`、`podx main`、`podx list`、`podx doctor`、`podx open --overlay` | 查看支持组件、主 Podfile 配置、本地/远端状态、健康检查和打开 overlay 文件 |
 | 打开工程 | `podx open` | 打开当前工程 `.xcworkspace` |
-| Jenkins 发布 | `podx publish`、`podx publish tf`、`podx publish app`、`podx publish --job nnrtc-ios-build` | 触发 Jenkins job；默认发布远端当前分支，不发布本地未提交代码 |
+| Jenkins 发布 | `podx publish`、`podx publish tf`、`podx publish app`、`podx publish --job media-ios-build` | 触发 Jenkins job；默认发布远端当前分支，不发布本地未提交代码 |
 | 多仓库 git | `mgit branch/status/diff/log/add/pull/push/commit/checkout/stash` | 对主工程和 overlay 本地组件执行组合 git 操作 |
 | 多仓库发布分支 | `mgit publish release/5.14.2`、`mgit dry-run publish release/5.14.2` | 从基准分支创建或更新多个仓库的发布分支，并按配置执行工程定制动作 |
 | 无 CocoaPods 模式 | `podx publish --job ...`、`podx ai ...`、全部 `mgit` 命令 | 新机器没有 CocoaPods 时仍可安装到用户 RubyGems 环境，用于 Jenkins 发布、AI 初始化和多仓库 git |
@@ -149,23 +149,23 @@ flowchart TD
 | `Podfile.overlay` | 否 | 个人本地开关，只声明哪些组件走本地源码 |
 | `Development Pods/` | 否 | 本地组件仓库目录，不依赖主工程外部路径 |
 | `.mgit-publish/` | 否 | `mgit publish` 临时工作目录 |
-| `nn-ios-tools/cocoapods-podx/` | 是 | 插件源码、命令模板、测试；不需要放在主工程目录下 |
-| `nn-ios-tools/cocoapods-podx-mcp/` | 是 | Codex MCP server；不需要放在主工程目录下 |
+| `podx-tools/cocoapods-podx/` | 是 | 插件源码、命令模板、测试；不需要放在主工程目录下 |
+| `podx-tools/cocoapods-podx-mcp/` | 是 | Codex MCP server；不需要放在主工程目录下 |
 
 ## 典型使用链路
 
 ### 本地调试内部组件
 
 ```bash
-podx NNBussCom
+podx AppFeatureKit
 podx install
-mgit branch NNBussCom
+mgit branch AppFeatureKit
 ```
 
 ### 更新本地组件并刷新 Pods
 
 ```bash
-podx update NNBussCom
+podx update AppFeatureKit
 ```
 
 ### 多仓库提交
@@ -173,9 +173,9 @@ podx update NNBussCom
 ```bash
 mgit status
 mgit diff
-mgit add NNBussCom NNBasciCommon
-mgit commit NNBussCom NNBasciCommon -m "feat: update components"
-mgit push NNBussCom NNBasciCommon
+mgit add AppFeatureKit AppBaseKit
+mgit commit AppFeatureKit AppBaseKit -m "feat: update components"
+mgit push AppFeatureKit AppBaseKit
 ```
 
 ### Jenkins 发布
@@ -183,7 +183,7 @@ mgit push NNBussCom NNBasciCommon
 ```bash
 podx publish
 podx publish tf --branch release/5.14.2
-podx publish --job nnrtc-ios-build --branch develop
+podx publish --job media-ios-build --branch develop
 ```
 
 ### 多仓库发布分支
@@ -205,13 +205,13 @@ podx doctor
 
 ```bash
 sh tools/install-cocoapods-podx.sh
-podx publish --job nnrtc-ios-build --branch develop
+podx publish --job media-ios-build --branch develop
 mgit status
 ```
 
 ## 设计约束
 
-1. 通用内核不能写死 NN 业务规则。工程差异应放在 `podx.config.yml` 或 `Podfile` 的组件声明中。
+1. 通用内核不能写死具体业务规则。工程差异应放在 `podx.config.yml` 或 `Podfile` 的组件声明中。
 2. `Podfile.overlay` 只表达“哪些组件本地化”，不表达分支、远端地址或 group 关系。
 3. `podx publish` 只发布远端分支 HEAD，不发布本地未提交代码。
 4. `mgit publish` 默认只做多仓库分支管理；修改 iOS 版本号、build 号、Podfile 分支属于显式配置后的工程定制动作。

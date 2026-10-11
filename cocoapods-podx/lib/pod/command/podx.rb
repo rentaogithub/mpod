@@ -79,11 +79,11 @@ class Pod::Command::Podx < Pod::Command
             podx skill lint                检查 skill library 定义规范
             podx skill verify NAME         校验 skill 前置条件，不执行任务
             podx skill run NAME            执行已验证的浅层 skill
-            podx publish [pgyer|tf|app]    触发 Jenkins 发布；默认 nn job 支持蒲公英/TestFlight/AppStore
+            podx publish [pgyer|tf|app]    触发 Jenkins 发布；默认 app job 支持蒲公英/TestFlight/AppStore
             podx publish --branch=develop  指定远端分支发布；也支持 --branch develop
             podx publish --job JOB         指定 Jenkins job 名；按该 job 参数能力发布
-            podx publish --job nnrtc-ios-build
-                                           触发 nnrtc-ios-build 打 Framework
+            podx publish --job media-ios-build
+                                           触发 media-ios-build 打 Framework
             podx publish tf --branch=release/x.x.x
                                            指定 release 分支发布 TestFlight
             podx publish app --branch=release/x.x.x
@@ -168,9 +168,9 @@ class Pod::Command::Podx < Pod::Command
       ['--jenkins-doctor', '分析 Jenkins 打包失败原因；构建号可传数字或 lastBuild。'],
       ['--jenkins-fix', '半自动修复低风险 Jenkins 打包失败；执行前确认。'],
       ['--fix-job=JOB', '半自动修复时触发 Jenkins 维护 job，例如 podx-upgrade。'],
-      ['--job=JOB', '指定 Jenkins job 名，例如 nnrtc-ios-build；会自动使用默认 Jenkins 主备地址。'],
+      ['--job=JOB', '指定 Jenkins job 名，例如 media-ios-build；会自动使用默认 Jenkins 主备地址。'],
       ['--jenkins-job=JOB', '同 --job。'],
-      ['--jenkins-url=URL', 'Jenkins 发布任务地址；默认 http://10.1.2.175:8080/job/nn/。'],
+      ['--jenkins-url=URL', 'Jenkins 发布任务地址；默认 https://jenkins.example.com/job/app/。'],
       ['--branch=BRANCH', '指定 Jenkins 发布远端分支；tf/app 必须是 release/x.x.x，等同 --publish-branch。'],
       ['--publish-branch=BRANCH', '指定 Jenkins 发布远端分支；tf/app 必须是 release/x.x.x。'],
       ['--publish-password=PASSWORD', 'Jenkins 发布验证密码；默认交互输入 TestFlight/AppStore 密码，Pgyer 默认空。'],
@@ -304,7 +304,7 @@ class Pod::Command::Podx < Pod::Command
   def run
     unless internal_podx_invocation?
       Pod::UI.puts 'pod podx 是 cocoapods-podx 的内部入口，请使用 podx 或 mgit。'
-      Pod::UI.puts '示例：podx update NNBussCom'
+      Pod::UI.puts '示例：podx update AppFeatureKit'
       Pod::UI.puts '示例：podx open --overlay'
       Pod::UI.puts '示例：mgit status'
       return
@@ -641,7 +641,7 @@ class Pod::Command::Podx < Pod::Command
 
   def declared_managed_pod_names
     @declared_managed_pod_names ||= declared_main_entries
-      .select { |entry| entry[:type] == :managed_pod && (entry[:group_name].nil? || entry[:group_name] == 'nn_ios') }
+      .select { |entry| entry[:type] == :managed_pod && (entry[:group_name].nil? || entry[:group_name] == 'app_ios') }
       .map { |entry| entry[:name] }
       .uniq
   end
@@ -649,7 +649,7 @@ class Pod::Command::Podx < Pod::Command
   def declared_biz_group_names
     @declared_biz_group_names ||= declared_main_entries
       .select do |entry|
-        entry[:group_name] && entry[:group_name] != 'nn_ios'
+        entry[:group_name] && entry[:group_name] != 'app_ios'
       end
       .map { |entry| entry[:group_name] }
       .uniq
@@ -658,7 +658,7 @@ class Pod::Command::Podx < Pod::Command
   def declared_managed_pod_branches
     @declared_managed_pod_branches ||= begin
       branches = {}
-      declared_main_entries.select { |entry| entry[:type] == :managed_pod && (entry[:group_name].nil? || entry[:group_name] == 'nn_ios') }.each do |entry|
+      declared_main_entries.select { |entry| entry[:type] == :managed_pod && (entry[:group_name].nil? || entry[:group_name] == 'app_ios') }.each do |entry|
         branches[entry[:name]] = entry[:branch] if entry[:branch]
       end
       branches
@@ -668,7 +668,7 @@ class Pod::Command::Podx < Pod::Command
   def declared_biz_group_branches
     @declared_biz_group_branches ||= begin
       branches = {}
-      declared_main_entries.select { |entry| entry[:group_name] && entry[:group_name] != 'nn_ios' }.each do |entry|
+      declared_main_entries.select { |entry| entry[:group_name] && entry[:group_name] != 'app_ios' }.each do |entry|
         branches[entry[:group_name]] ||= entry[:branch] if entry[:branch]
       end
       branches
@@ -755,42 +755,42 @@ class Pod::Command::Podx < Pod::Command
       '#   framework: warn',
       '# publish_main_repo、publish_update_podfile_branch、publish_version 是工程定制发布动作。',
       '# 通用项目可以不配置；iOS Podfile 工程需要时再显式开启。',
-      '# publish_main_repo: nnios',
+      '# publish_main_repo: iosapp',
       '# publish_update_podfile_branch: true',
       'publish_repos:',
-      '  - nnios',
-      '  - nnbusscom',
-      '  - nnimmanager',
-      '  - nnbascicommon',
-      '  - nnapperance',
-      '  - nncategory',
-      '  - nnlogmodule',
-      '  - nnnetwork',
-      '  - nnrealreachability',
-      '  - nnyytext',
-      '  - nngeneral',
-      '  - nnswiftscan',
+      '  - iosapp',
+      '  - appfeaturekit',
+      '  - appimmanager',
+      '  - appbasekit',
+      '  - appappearance',
+      '  - appcategory',
+      '  - applogmodule',
+      '  - appnetwork',
+      '  - appreachability',
+      '  - apptextkit',
+      '  - appgeneral',
+      '  - appswiftscan',
       '# publish_version:',
       '#   type: ios_xcodeproj',
       "#   branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$'",
-      '#   project_file: NNIM.xcodeproj/project.pbxproj',
+      '#   project_file: AppIM.xcodeproj/project.pbxproj',
       '#   build_number_strategy: ios_semver',
       '',
-      '# 平台托管工程建议由 nn-ios-platform 同步单产品线扁平配置。',
-      '# product_line: nnrtc',
-      '# target_name: nnrtc_ios',
-      '# private_source: http://git.example.com/nnrtc_ios/nnspec.git',
-      '# git_base_url: http://git.example.com',
+      '# 平台托管工程建议由 ios-platform 同步单产品线扁平配置。',
+      '# product_line: media',
+      '# target_name: media_ios',
+      '# private_source: https://git.example.com/media_ios/specs.git',
+      '# git_base_url: https://git.example.com',
       '# overlay_file: Podfile.overlay',
-      '# publish_work_dir: .mgit-publish/nnrtc',
+      '# publish_work_dir: .mgit-publish/media',
       '# publish_base_branch: develop',
-      '# publish_main_repo: nnrtc-ios',
+      '# publish_main_repo: media-ios',
       '# publish_repos:',
-      '#   - nnrtc-ios',
-      '#   - nnrtc-core',
-      '# jenkins_base_url: http://jenkins.example.com',
-      '# jenkins_job: nnrtc-ios-build',
-      '# jenkins_repo_url: http://git.example.com/nnrtc_ios/nnrtc-ios.git',
+      '#   - media-ios',
+      '#   - media-core',
+      '# jenkins_base_url: https://jenkins.example.com',
+      '# jenkins_job: media-ios-build',
+      '# jenkins_repo_url: https://git.example.com/media_ios/media-ios.git',
     ]
 
     lines << ''
@@ -957,7 +957,7 @@ class Pod::Command::Podx < Pod::Command
   def default_private_source(git_base_url, target_name)
     return '' if git_base_url.nil? || git_base_url.empty?
 
-    "#{git_base_url}/#{target_name}/nnspec.git"
+    "#{git_base_url}/#{target_name}/specs.git"
   end
 
   def show_branch_info
@@ -1121,7 +1121,7 @@ class Pod::Command::Podx < Pod::Command
 
   def clean_pod_cache_and_installed_pods
     if @pod_names.empty?
-      raise Pod::Informative, '请指定要清理的组件，例如：podx clean NNRtc'
+      raise Pod::Informative, '请指定要清理的组件，例如：podx clean AppRTC'
     end
 
     rows = []

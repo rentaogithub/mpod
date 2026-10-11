@@ -5,7 +5,7 @@ Gem::Specification.new do |spec|
   spec.description   = 'Adds podx and mgit helpers to switch private CocoaPods components between local and remote sources.'
   spec.authors       = ['Codex']
   spec.email         = ['noreply@example.com']
-  spec.homepage      = 'http://git.leigod.top/nn_ios/nnios'
+  spec.homepage      = 'https://github.com/rentaogithub/mpod'
   spec.license       = 'MIT'
 
   spec.files         = Dir[

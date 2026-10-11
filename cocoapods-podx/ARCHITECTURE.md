@@ -13,7 +13,7 @@
 ## 目录结构
 
 ```text
-nn-ios-tools/cocoapods-podx/
+podx-tools/cocoapods-podx/
   bin/
     podx                                      # pod 增强命令入口
     mgit                                      # 多仓库 git 命令入口
@@ -75,8 +75,8 @@ lib/cocoapods_podx/shims/podx         # Shell 命令实现
 它把用户友好的命令转换为插件内部动作或原生 `pod`：
 
 ```text
-podx NNBussCom        -> 切换 NNBussCom 到本地源码
-podx update NNBussCom -> 更新本地仓库并执行 pod update NNBussCom
+podx AppFeatureKit        -> 切换 AppFeatureKit 到本地源码
+podx update AppFeatureKit -> 更新本地仓库并执行 pod update AppFeatureKit
 podx publish tf       -> 触发 TestFlight 发布
 podx install          -> pod install
 ```
@@ -134,7 +134,7 @@ lib/cocoapods_podx/runtime.rb
 插件在 `cocoapods-podx.rb` 中通过 `Pod::Podfile::DSL.prepend` 注入 `npod`：
 
 ```ruby
-pod 'NNLibrary', :branch => 'develop', :remote_name => 'NNYYText', :local_name => 'NNLibrary'
+pod 'AppLibrary', :branch => 'develop', :remote_name => 'AppTextKit', :local_name => 'AppLibrary'
 ```
 
 带内部组件参数的 `pod` 声明表示：这是一个由 overlay 管理的内部组件。
@@ -149,20 +149,20 @@ pod 'NNLibrary', :branch => 'develop', :remote_name => 'NNYYText', :local_name =
 配置文件放在主工程 `Podfile` 同级目录，描述工程级差异：
 
 ```yaml
-target_name: nn_ios
+target_name: app_ios
 private_source: SPECS_REPO_URL
 git_base_url: GIT_BASE_URL
 publish_work_dir: .mgit-publish
 publish_base_branch: develop
-publish_main_repo: nnios
+publish_main_repo: iosapp
 publish_update_podfile_branch: true
 publish_repos:
-  - nnios
-  - nnbusscom
+  - iosapp
+  - appfeaturekit
 publish_version:
   type: ios_xcodeproj
   branch_pattern: '^release/(\d+\.\d+\.\d+)$'
-  project_file: NNIM.xcodeproj/project.pbxproj
+  project_file: AppIM.xcodeproj/project.pbxproj
   build_number_strategy: ios_semver
 ```
 
@@ -310,7 +310,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  A["podx NNBussCom"] --> B["插件内部调度"]
+  A["podx AppFeatureKit"] --> B["插件内部调度"]
   B --> C["校验组件是否在 Podfile npod 中声明"]
   C --> D["准备 Development Pods/仓库"]
   D --> E["缺失则 clone"]
@@ -328,7 +328,7 @@ flowchart TD
   C --> D["克隆到 publish_work_dir"]
   D --> E["checkout 基准分支"]
   E --> F["checkout -B 目标分支"]
-  F --> G{"是否 nnios 主工程"}
+  F --> G{"是否 iosapp 主工程"}
   G -- "是" --> H["在目标分支更新 Podfile 分支和版本号"]
   G -- "否" --> I["直接推送目标分支"]
   H --> I
@@ -436,9 +436,9 @@ test/test_runtime.rb
 
 ## 当前边界和注意事项
 
-- 插件核心已经具备通用性，但当前默认配置和文档仍服务于 NN iOS 工程。
-- `JenkinsPublish` 仍包含 NN 当前 Jenkins 默认地址，后续可配置化。
-- `podx update NNBussCom` 会先更新 overlay 本地仓库，再执行原生 `pod update NNBussCom`。
+- 插件核心与文档使用中性示例，不绑定具体业务或公司标识。
+- `JenkinsPublish` 中的示例地址仅用于说明，实际地址应通过工程配置提供。
+- `podx update AppFeatureKit` 会先更新 overlay 本地仓库，再执行原生 `pod update AppFeatureKit`。
 - `Podfile.overlay` 不纳入 git，`podx.config.yml` 建议纳入 git。
 - `Development Pods/` 不纳入 git，只存放本地主工程内的组件源码。
 - Nexus 旧 gem 清理是发布仓库维护动作，不属于插件运行时能力。

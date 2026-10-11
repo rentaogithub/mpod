@@ -20,7 +20,7 @@
 不需要安装 npm 依赖，直接使用本机 Node.js：
 
 ```bash
-node /Users/renyang/工作/code/nncode/nnios/tools/cocoapods-podx-mcp/server.js
+node /path/to/mpod/cocoapods-podx-mcp/server.js
 ```
 
 ## Codex 配置示例
@@ -31,9 +31,9 @@ node /Users/renyang/工作/code/nncode/nnios/tools/cocoapods-podx-mcp/server.js
     "cocoapods-podx": {
       "command": "node",
       "args": [
-        "/Users/renyang/工作/code/nncode/nnios/tools/cocoapods-podx-mcp/server.js"
+        "/path/to/mpod/cocoapods-podx-mcp/server.js"
       ],
-      "cwd": "/Users/renyang/工作/code/nncode/nnios"
+      "cwd": "/path/to/ios-app"
     }
   }
 }
@@ -44,11 +44,11 @@ node /Users/renyang/工作/code/nncode/nnios/tools/cocoapods-podx-mcp/server.js
 每个工具都支持：
 
 - `projectDirectory`：可选，指定包含 `Podfile` 的工程目录。
-- `productLine`：可选，指定产品线 ID，例如 `nn`、`nnrtc`；等同命令行 `--line`。
+- `productLine`：可选，指定产品线 ID，例如 `app`、`media`；等同命令行 `--line`。
 
 `mgit_status`、`mgit_branch`、`mgit_diff`、`mgit_pull`、`mgit_checkout`、`mgit_stash` 额外支持：
 
-- `repos`：可选，指定仓库名列表，例如 `["NNBussCom", "NNLibrary"]`。
+- `repos`：可选，指定仓库名列表，例如 `["AppFeatureKit", "AppLibrary"]`。
 
 `mgit_checkout` 额外支持：
 
@@ -64,13 +64,13 @@ node /Users/renyang/工作/code/nncode/nnios/tools/cocoapods-podx-mcp/server.js
 
 `podx_update` 额外支持：
 
-- `pods`：可选，指定更新的 pod 名列表，例如 `["NNLibrary"]`。
+- `pods`：可选，指定更新的 pod 名列表，例如 `["AppLibrary"]`。
 
 多产品线工程可以这样调用：
 
 ```json
 {
-  "projectDirectory": "/Users/renyang/工作/code/nncode/nnios",
-  "productLine": "nnrtc"
+  "projectDirectory": "/path/to/ios-app",
+  "productLine": "media"
 }
 ```

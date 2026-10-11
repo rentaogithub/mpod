@@ -316,7 +316,7 @@ module CocoapodsPodx
         matches.map do |entry|
           group_name = entry[:group_name].to_s
           target_name = CocoapodsPodx::Runtime.config[:target_name].to_s
-          if !group_name.empty? && group_name != 'nn_ios' && group_name != target_name
+          if !group_name.empty? && group_name != 'app_ios' && group_name != target_name
             group_name
           else
             entry[:name]
@@ -509,18 +509,18 @@ module CocoapodsPodx
         return configured_repos.map { |repo| mgit_publish_repo_config(repo, base_url) } if configured_repos && configured_repos.any?
 
         repo_names = %w[
-          nnios
-          nnbusscom
-          nnimmanager
-          nnbascicommon
-          nnapperance
-          nncategory
-          nnlogmodule
-          nnnetwork
-          nnrealreachability
-          nnyytext
-          nngeneral
-          nnswiftscan
+          iosapp
+          appfeaturekit
+          appimmanager
+          appbasekit
+          appappearance
+          appcategory
+          applogmodule
+          appnetwork
+          appreachability
+          apptextkit
+          appgeneral
+          appswiftscan
         ]
 
         repo_names.map { |name| mgit_publish_repo_config(name, base_url) }
@@ -537,7 +537,7 @@ module CocoapodsPodx
           return "#{base_url}/#{target_name}"
         end
 
-        'http://git.leigod.top/nn_ios'
+        'https://git.example.com/app_ios'
       end
 
       def mgit_publish_config
@@ -577,7 +577,7 @@ module CocoapodsPodx
         main_remote = respond_to?(:git_remote_url, true) ? git_remote_url : nil
         main_repo = mgit_publish_config[:main_repo].to_s
         configured_main_remote = CocoapodsPodx::Runtime.config[:jenkins_repo_url].to_s.strip
-        if name == 'nnios' || (!main_repo.empty? && name.to_s == main_repo)
+        if name == 'iosapp' || (!main_repo.empty? && name.to_s == main_repo)
           return configured_main_remote unless configured_main_remote.empty?
 
           return main_remote || "#{base_url}/#{name}.git"

@@ -136,14 +136,14 @@ podx ai update
 组件源码调试：
 
 ```bash
-podx NNBussCom
+podx AppFeatureKit
 podx install
 ```
 
 更新组件：
 
 ```bash
-podx update NNBussCom
+podx update AppFeatureKit
 ```
 
 多仓库状态：

@@ -642,10 +642,10 @@ module CocoapodsPodx
           '# 未出现在 Podfile.overlay 中的组件默认走远端。',
           '# 不要写 localWork、branch 或其他参数。',
           '# 示例：',
-          "# pod 'NNBussCom'                    # 业务组件组切本地",
-          "# pod 'NNBasciCommon'               # 单个组件切本地",
-          "# pod 'NNIMManager'                 # 单个组件切本地",
-          "# pod 'NNApperance'                 # 单个组件切本地",
+          "# pod 'AppFeatureKit'                    # 业务组件组切本地",
+          "# pod 'AppBaseKit'               # 单个组件切本地",
+          "# pod 'AppIMManager'                 # 单个组件切本地",
+          "# pod 'AppAppearance'                 # 单个组件切本地",
           ''
         ]
       end

@@ -289,7 +289,7 @@ module CocoapodsPodx
       return unless @stash_apply_mode
       return if @pod_names.length == 1
 
-      raise Pod::Informative, 'mgit stash apply 必须指定一个仓库，例如：mgit stash apply NNBussCom'
+      raise Pod::Informative, 'mgit stash apply 必须指定一个仓库，例如：mgit stash apply AppFeatureKit'
     end
 
     def validate_rebase_subcommand_arguments!
@@ -336,7 +336,7 @@ module CocoapodsPodx
       @declared_managed_pod_branches ||= begin
         branches = {}
         CocoapodsPodx::Runtime.managed_pod_entries.each do |entry|
-          next if entry[:group_name] && entry[:group_name] != 'nn_ios'
+          next if entry[:group_name] && entry[:group_name] != 'app_ios'
 
           branches[entry[:name]] = entry[:branch] if entry[:branch]
         end
@@ -349,7 +349,7 @@ module CocoapodsPodx
         branches = {}
         CocoapodsPodx::Runtime.managed_pod_entries.each do |entry|
           group_name = entry[:group_name]
-          next if group_name.nil? || group_name == 'nn_ios'
+          next if group_name.nil? || group_name == 'app_ios'
 
           branches[group_name] ||= entry[:branch] if entry[:branch]
         end

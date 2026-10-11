@@ -243,9 +243,9 @@ latest_podx_version_from_nexus() {
     return 0
   fi
 
-  NEXUS_SEARCH_API="${COCOAPODS_PODX_NEXUS_SEARCH_API:-${COCOAPODS_OVERLAY_NEXUS_SEARCH_API:-http://172.31.4.4:9091/service/rest/beta/search/assets?repository=nn_ios}}" \
-  NEXUS_USER="${COCOAPODS_PODX_NEXUS_USER:-${COCOAPODS_OVERLAY_NEXUS_USER:-admin}}" \
-  NEXUS_PASSWORD="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSWORD:-admin123}}" \
+  NEXUS_SEARCH_API="${COCOAPODS_PODX_NEXUS_SEARCH_API:-${COCOAPODS_OVERLAY_NEXUS_SEARCH_API:-https://nexus.example.com/service/rest/beta/search/assets?repository=app_ios}}" \
+  NEXUS_USER="${COCOAPODS_PODX_NEXUS_USER:-${COCOAPODS_OVERLAY_NEXUS_USER:-}}" \
+  NEXUS_PASSWORD="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSWORD:-}}" \
   "$(detect_cocoapods_ruby)" -e '
 require "json"
 require "net/http"
@@ -313,10 +313,10 @@ upgrade_cocoapods_podx() {
 
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/cocoapods-podx-upgrade.XXXXXX")"
   gem_file="$tmp_dir/cocoapods-podx-$target_version.gem"
-  gem_url="${COCOAPODS_PODX_GEM_SOURCE:-${COCOAPODS_OVERLAY_GEM_SOURCE:-http://172.31.4.4:9091/repository/nn_ios/rubygems/cocoapods-podx/}}"
+  gem_url="${COCOAPODS_PODX_GEM_SOURCE:-${COCOAPODS_OVERLAY_GEM_SOURCE:-https://nexus.example.com/repository/app_ios/rubygems/cocoapods-podx/}}"
   gem_url="${gem_url%/}/cocoapods-podx-$target_version.gem"
-  nexus_user="${COCOAPODS_PODX_NEXUS_USER:-${COCOAPODS_OVERLAY_NEXUS_USER:-admin}}"
-  nexus_password="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSWORD:-admin123}}"
+  nexus_user="${COCOAPODS_PODX_NEXUS_USER:-${COCOAPODS_OVERLAY_NEXUS_USER:-}}"
+  nexus_password="${COCOAPODS_PODX_NEXUS_PASSWORD:-${COCOAPODS_OVERLAY_NEXUS_PASSWORD:-}}"
 
   echo "cocoapods-podx [upgrade] $current_version -> $target_version"
   if [ -n "$nexus_user" ]; then
@@ -429,7 +429,7 @@ podx_gitlab_url() {
     fi
   fi
 
-  echo "http://git.leigod.top"
+  echo "https://git.example.com"
 }
 
 print_podx_git_token_setup_guide() {
@@ -1051,7 +1051,7 @@ show_help() {
 podx 是工程依赖、发布和 AI 工作流命令入口。
 
 pod 扩展命令:
-  podx workon NNBussCom             # 开始开发组件，等同 podx NNBussCom
+  podx workon AppFeatureKit             # 开始开发组件，等同 podx AppFeatureKit
   podx check                        # 检查工程接入和本地组件状态
   podx graph                        # 更新 AI 图谱并检查改动影响
   podx ship [pgyer|tf|app]          # 发布意图入口，等同 podx publish
@@ -1062,9 +1062,9 @@ pod 扩展命令:
   podx sync                        # 同步团队规则、技能、流程、AI 上下文和 hooks
   podx install                     # 等同 pod install
   podx install --repo-update       # 等同 pod install --repo-update
-  podx update NNBussCom            # 更新命中的本地组件后执行 pod update
-  podx clean NNRtc                 # 清理指定组件 pod cache，并删除 Pods/NNRtc
-  podx cache clean NNRtc           # 同 podx clean NNRtc
+  podx update AppFeatureKit            # 更新命中的本地组件后执行 pod update
+  podx clean AppRTC                 # 清理指定组件 pod cache，并删除 Pods/AppRTC
+  podx cache clean AppRTC           # 同 podx clean AppRTC
   podx deps                        # 查看依赖组件分支/版本和依赖关系
   podx rules                       # 查看当前工程规则器规则
   podx rules check                 # 检查 .gitignore 是否符合规则器治理

@@ -74,7 +74,7 @@ podx version
 冲突规则：`podx` 遇到同名命令时优先执行插件语义；需要原生 CocoaPods 行为时，直接使用 `pod` 命令。
 
 ```bash
-podx update NNBussCom            # 官方 pod update；命中本地组件时先更新本地仓库
+podx update AppFeatureKit            # 官方 pod update；命中本地组件时先更新本地仓库
 podx install --no-repo-update    # 原生 pod install
 podx repo update                 # 原生 pod repo update
 pod update RxSwift               # 原生 CocoaPods 命令
@@ -83,8 +83,8 @@ pod update RxSwift               # 原生 CocoaPods 命令
 ```bash
 podx 新增命令：
 podx                             # 查看支持切换的内部组件范围
-podx NNBussCom                   # 将组件切到本地；本地缺失时自动 clone，分支不一致时自动切换
-podx disable NNBussCom           # 将组件切回远端
+podx AppFeatureKit                   # 将组件切到本地；本地缺失时自动 clone，分支不一致时自动切换
+podx disable AppFeatureKit           # 将组件切回远端
 podx disable                     # 全部切回远端
 podx main                        # 查看主 Podfile 中的 npod 配置
 podx publish                     # 当前分支触发默认发布渠道
@@ -95,7 +95,7 @@ podx publish tf --branch release/5.14.2 # 指定 release 分支发布 TestFlight
 podx publish app --branch release/5.14.2 # 指定 release 分支发布 APP Store
 podx dry-run publish app         # 预览发布参数，不触发构建
 podx list                        # 查看 overlay 组件的 local/remote 状态
-podx dry-run NNBussCom           # 预览 overlay 写入、本地仓库路径、远端地址、目标分支和 clone/checkout/pull 动作
+podx dry-run AppFeatureKit           # 预览 overlay 写入、本地仓库路径、远端地址、目标分支和 clone/checkout/pull 动作
 podx dry-run disable             # 预览全部切回远端，不修改 Podfile.overlay
 podx dry-run update              # 预览本地组件分支切换和 pull 动作，不 checkout 或 pull
 podx doctor                      # 检查插件接入、配置和本地组件状态
@@ -113,8 +113,8 @@ podx ai mcp                      # 输出 Hermes MCP 注册说明
 podx help                        # 查看中文帮助
 
 高阶意图命令：
-podx workon NNBussCom            # 开始开发组件，等同 podx NNBussCom
-podx dev NNBussCom               # 同 podx workon
+podx workon AppFeatureKit            # 开始开发组件，等同 podx AppFeatureKit
+podx dev AppFeatureKit               # 同 podx workon
 podx check                       # 检查工程接入、配置和本地组件状态，等同 podx doctor
 podx health                      # 同 podx check
 podx graph                       # 更新 AI 图谱并检查改动影响，等同 podx ai update
@@ -128,13 +128,13 @@ pod 命令：
 podx install --no-repo-update    # 执行官方 pod install --no-repo-update
 podx repo update                 # 执行官方 pod repo update
 podx init                        # 执行官方 pod init，并生成 podx.config.yml
-podx update NNBussCom            # 执行官方 pod update；命中本地组件时先更新本地仓库
+podx update AppFeatureKit            # 执行官方 pod update；命中本地组件时先更新本地仓库
 
 mgit 多仓库 git 命令：
 mgit branch                      # 组合查看 git branch
-mgit branch NNBussCom            # 查看单个组件分支
-mgit checkout NNBussCom release/5.14.2 # 只切换指定组件仓库分支
-mgit stash NNBussCom             # 只 stash 指定组件仓库
+mgit branch AppFeatureKit            # 查看单个组件分支
+mgit checkout AppFeatureKit release/5.14.2 # 只切换指定组件仓库分支
+mgit stash AppFeatureKit             # 只 stash 指定组件仓库
 mgit status                      # 组合查看 git status --short
 mgit diff                        # 组合查看 git diff
 mgit log                         # 组合查看最近 5 条 git log
@@ -158,7 +158,7 @@ mgit dry-run commit              # 预览哪些仓库会被组合提交，不执
 
 ## 多产品线配置
 
-多产品线由 `nn-ios-platform` 维护产品线身份、仓库、Jenkins 和发布参数；`podx`、`mgit` 只消费当前选中的有效配置并在本机执行。这样平台侧可以统一管理产品线，CLI 侧保持轻量、可离线、兼容旧工程。
+多产品线由 `ios-platform` 维护产品线身份、仓库、Jenkins 和发布参数；`podx`、`mgit` 只消费当前选中的有效配置并在本机执行。这样平台侧可以统一管理产品线，CLI 侧保持轻量、可离线、兼容旧工程。
 
 产品线选择优先级：
 
@@ -167,24 +167,24 @@ mgit dry-run commit              # 预览哪些仓库会被组合提交，不执
 3. 兼容环境变量：`COCOAPODS_PODX_PRODUCT_LINE`
 4. `podx.config.yml` 中的 `active_product_line`、`product_line`、`default_product_line` 或 `default_line`
 
-`nn-ios-tools` 仍兼容 `product_lines` 聚合配置，便于历史工程迁移；但在当前平台流程里，同一个主工程只对应一个产品线。新工程或平台托管工程建议由 `nn-ios-platform` 直接同步扁平单产品线配置到主工程根目录：
+`podx-tools` 仍兼容 `product_lines` 聚合配置，便于历史工程迁移；但在当前平台流程里，同一个主工程只对应一个产品线。新工程或平台托管工程建议由 `ios-platform` 直接同步扁平单产品线配置到主工程根目录：
 
 ```yaml
-product_line: nnrtc
-target_name: nnrtc_ios
-private_source: http://git.example.com/nnrtc_ios/nnspec.git
-git_base_url: http://git.example.com
+product_line: media
+target_name: media_ios
+private_source: https://git.example.com/media_ios/specs.git
+git_base_url: https://git.example.com
 overlay_file: Podfile.overlay
-publish_work_dir: .mgit-publish/nnrtc
+publish_work_dir: .mgit-publish/media
 publish_base_branch: develop
 publish_pipeline_gate: false
-publish_main_repo: nnrtc-ios
+publish_main_repo: media-ios
 publish_repos:
-  - nnrtc-ios
-  - nnrtc-core
-jenkins_base_url: http://jenkins.example.com
-jenkins_job: nnrtc-ios-build
-jenkins_repo_url: http://git.example.com/nnrtc_ios/nnrtc-ios.git
+  - media-ios
+  - media-core
+jenkins_base_url: https://jenkins.example.com
+jenkins_job: media-ios-build
+jenkins_repo_url: https://git.example.com/media_ios/media-ios.git
 ```
 
 常用方式：
@@ -197,7 +197,7 @@ mgit publish release/1.8.0
 pod install --no-repo-update
 ```
 
-和 `nn-ios-platform` 集成时，平台侧推荐做三件事：
+和 `ios-platform` 集成时，平台侧推荐做三件事：
 
 1. 在产品线配置中保存非敏感 CLI 配置：`target_name`、`private_source`、`git_base_url`、`publish`、`jenkins`。
 2. 保存后由平台直接同步 `podx.config.yml` 到该产品线对应主工程仓库根目录，并把当前产品线写入 `product_line`。
@@ -245,17 +245,17 @@ mgit publish release/5.14.2
 ```yaml
 publish_work_dir: .mgit-publish
 publish_base_branch: develop
-publish_main_repo: nnios
+publish_main_repo: iosapp
 publish_update_podfile_branch: true
 publish_repos:
-  - nnios
-  - nnbusscom
+  - iosapp
+  - appfeaturekit
   - name: custom_repo
     url: GIT_REPO_URL
 publish_version:
   type: ios_xcodeproj
   branch_pattern: '^release/(\d+\.\d+\.\d+)$'
-  project_file: NNIM.xcodeproj/project.pbxproj
+  project_file: AppIM.xcodeproj/project.pbxproj
   build_number_strategy: ios_semver
 ```
 
@@ -263,7 +263,7 @@ publish_version:
 mgit publish release/5.14.2 --base-branch develop --push-mode normal
 mgit publish release/5.14.2 --push-mode skip
 mgit publish release/5.14.2 --push-mode set-upstream
-mgit publish release/5.14.2 --publish-work-dir /tmp/nn-publish
+mgit publish release/5.14.2 --publish-work-dir /tmp/podx-publish
 ```
 
 ## 本地组件切换
@@ -271,21 +271,21 @@ mgit publish release/5.14.2 --publish-work-dir /tmp/nn-publish
 切换单个组件到本地源码：
 
 ```bash
-podx NNBussCom
+podx AppFeatureKit
 pod install --no-repo-update
 ```
 
 切换多个组件到本地源码：
 
 ```bash
-podx NNBussCom NNBasciCommon NNLibrary
+podx AppFeatureKit AppBaseKit AppLibrary
 pod install --no-repo-update
 ```
 
 切回远端：
 
 ```bash
-podx disable NNBussCom
+podx disable AppFeatureKit
 pod install --no-repo-update
 ```
 
@@ -301,9 +301,9 @@ pod install --no-repo-update
 `Podfile.overlay` 与主工程 `Podfile` 同级，只声明哪些内部组件使用本地源码：
 
 ```ruby
-npod 'NNBussCom'
-npod 'NNBasciCommon'
-npod 'NNLibrary'
+npod 'AppFeatureKit'
+npod 'AppBaseKit'
+npod 'AppLibrary'
 ```
 
 规则：
@@ -317,9 +317,9 @@ npod 'NNLibrary'
 
 ```text
 Development Pods/
-  nnbascicommon/
-  nnbusscom/
-  nnlibrary/
+  appbasekit/
+  appfeaturekit/
+  applibrary/
 ```
 
 如果 `Podfile.overlay` 中声明的本地组件目录不存在，执行 `pod install` 或 `podx 组件名` 时会自动 clone。
@@ -328,7 +328,7 @@ Development Pods/
 
 ```bash
 podx main
-podx NNBussCom
+podx AppFeatureKit
 mgit branch
 pod install --no-repo-update
 ```
@@ -336,7 +336,7 @@ pod install --no-repo-update
 联调结束：
 
 ```bash
-podx disable NNBussCom
+podx disable AppFeatureKit
 pod install --no-repo-update
 ```
 
@@ -370,7 +370,7 @@ mgit branch
 更新本地组件：
 
 ```bash
-podx update NNBussCom
+podx update AppFeatureKit
 ```
 
 组合提交主工程和当前本地组件：
@@ -389,11 +389,11 @@ mgit push
 只提交指定本地组件：
 
 ```bash
-mgit status NNBussCom NNBasciCommon
-mgit diff NNBussCom NNBasciCommon
-mgit add NNBussCom NNBasciCommon
-mgit commit NNBussCom NNBasciCommon -m "feat: update components"
-mgit push NNBussCom NNBasciCommon
+mgit status AppFeatureKit AppBaseKit
+mgit diff AppFeatureKit AppBaseKit
+mgit add AppFeatureKit AppBaseKit
+mgit commit AppFeatureKit AppBaseKit -m "feat: update components"
+mgit push AppFeatureKit AppBaseKit
 ```
 
 还能继续支持的 git 命令建议：

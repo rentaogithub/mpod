@@ -235,7 +235,7 @@ module CocoapodsPodx
       @declared_managed_pod_branches ||= begin
         branches = {}
         CocoapodsPodx::Runtime.managed_pod_entries.each do |entry|
-          next if entry[:group_name] && entry[:group_name] != 'nn_ios'
+          next if entry[:group_name] && entry[:group_name] != 'app_ios'
 
           branches[entry[:name]] = entry[:branch] if entry[:branch]
         end
@@ -249,7 +249,7 @@ module CocoapodsPodx
         branches = {}
         CocoapodsPodx::Runtime.managed_pod_entries.each do |entry|
           group_name = entry[:group_name]
-          next if group_name.nil? || group_name == 'nn_ios'
+          next if group_name.nil? || group_name == 'app_ios'
 
           branches[group_name] ||= entry[:branch] if entry[:branch]
         end
@@ -290,8 +290,8 @@ module CocoapodsPodx
           podx dry-run publish --job JOB [OPTIONS]
 
         示例:
-          podx publish --job nnrtc-ios-build --branch develop
-          podx dry-run publish --job nnrtc-ios-build --branch develop
+          podx publish --job media-ios-build --branch develop
+          podx dry-run publish --job media-ios-build --branch develop
 
         Options:
           --branch BRANCH

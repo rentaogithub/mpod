@@ -80,30 +80,30 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def setup
     @project_dir = Dir.mktmpdir('cocoapods-podx-test')
     File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
-      target_name: nn_ios
-      private_source: http://git.example.com/nn_ios/specs.git
-      git_base_url: http://git.example.com
+      target_name: app_ios
+      private_source: https://git.example.com/app_ios/specs.git
+      git_base_url: https://git.example.com
       publish_work_dir: .mgit-publish
       publish_base_branch: develop
       publish_pipeline_gate: false
-      publish_main_repo: nnios
+      publish_main_repo: iosapp
       publish_update_podfile_branch: true
       publish_repos:
-        - nnios
-        - nnbusscom
+        - iosapp
+        - appfeaturekit
       publish_version:
         type: ios_xcodeproj
         branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$'
-        project_file: NNIM.xcodeproj/project.pbxproj
+        project_file: AppIM.xcodeproj/project.pbxproj
         build_number_strategy: ios_semver
     YAML
     File.write(File.join(@project_dir, 'Podfile'), <<~RUBY)
-      source 'http://git.example.com/nn_ios/specs.git'
-      pod 'NNApperance', :branch => 'develop'
-      pod 'NNLibrary', :branch => 'develop', :remote_name => 'NNYYText', :local_name => 'NNLibrary'
-      pod 'NNLogin', :branch => 'develop', :group_name => 'NNBussCom'
+      source 'https://git.example.com/app_ios/specs.git'
+      pod 'AppAppearance', :branch => 'develop'
+      pod 'AppLibrary', :branch => 'develop', :remote_name => 'AppTextKit', :local_name => 'AppLibrary'
+      pod 'AppLogin', :branch => 'develop', :group_name => 'AppFeatureKit'
       pod 'Alamofire'
-      pod 'GitOnlyPod', :git => 'http://git.example.com/open/GitOnlyPod.git', :branch => 'main'
+      pod 'GitOnlyPod', :git => 'https://git.example.com/open/GitOnlyPod.git', :branch => 'main'
       pod 'DebugOnlyPod', '1.0.0', :configurations => ['Debug']
     RUBY
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
@@ -125,30 +125,30 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def write_podfile_lock_checkout_options(commit: 'abcdef123456')
     File.write(File.join(@project_dir, 'Podfile.lock'), <<~YAML)
       PODS:
-        - NNLibrary
+        - AppLibrary
 
       CHECKOUT OPTIONS:
-        NNLibrary:
-          :git: http://git.example.com/nn_ios/nnyytext.git
+        AppLibrary:
+          :git: https://git.example.com/app_ios/apptextkit.git
           :commit: #{commit}
     YAML
   end
 
   def test_internal_pod_definitions_are_managed_and_normal_pod_definitions_are_not
-    assert CocoapodsPodx::Runtime.managed_pod?('NNApperance')
+    assert CocoapodsPodx::Runtime.managed_pod?('AppAppearance')
     refute CocoapodsPodx::Runtime.managed_pod?('Alamofire')
     refute CocoapodsPodx::Runtime.managed_pod?('GitOnlyPod')
     refute CocoapodsPodx::Runtime.managed_pod?('DebugOnlyPod')
 
-    definition = CocoapodsPodx::Runtime.managed_pod_definition('NNLibrary')
+    definition = CocoapodsPodx::Runtime.managed_pod_definition('AppLibrary')
     assert_equal 'develop', definition[:branch]
-    assert_equal 'NNYYText', definition[:remote_name]
-    assert_equal 'NNLibrary', definition[:local_name]
+    assert_equal 'AppTextKit', definition[:remote_name]
+    assert_equal 'AppLibrary', definition[:local_name]
   end
 
   def test_group_names_are_supported_overlay_names
     assert_equal(
-      ['NNApperance', 'NNLibrary', 'NNBussCom'],
+      ['AppAppearance', 'AppLibrary', 'AppFeatureKit'],
       CocoapodsPodx::Runtime.podfile_supported_overlay_names
     )
   end
@@ -156,22 +156,22 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_mgit_checkout_requires_branch_when_only_component_name_is_given
     Dir.chdir(@project_dir) do
       error = assert_raises(Pod::Informative) do
-        CocoapodsPodx::MgitStandalone.new(['checkout', 'NNLibrary'])
+        CocoapodsPodx::MgitStandalone.new(['checkout', 'AppLibrary'])
       end
 
       assert_includes error.message, '缺少 checkout 目标分支'
-      assert_includes error.message, 'mgit checkout NNLibrary BRANCH'
+      assert_includes error.message, 'mgit checkout AppLibrary BRANCH'
     end
   end
 
   def test_mgit_merge_requires_branch_when_only_component_name_is_given
     Dir.chdir(@project_dir) do
       error = assert_raises(Pod::Informative) do
-        CocoapodsPodx::MgitStandalone.new(['merge', 'NNBussCom'])
+        CocoapodsPodx::MgitStandalone.new(['merge', 'AppFeatureKit'])
       end
 
       assert_includes error.message, '缺少 merge 来源分支'
-      assert_includes error.message, 'mgit merge NNBussCom BRANCH'
+      assert_includes error.message, 'mgit merge AppFeatureKit BRANCH'
     end
   end
 
@@ -201,14 +201,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_mgit_pull_defaults_to_rebase_and_accepts_ff_only_option
     Dir.chdir(@project_dir) do
-      default_command = CocoapodsPodx::MgitStandalone.new(['pull', 'NNLibrary'])
-      ff_only_command = CocoapodsPodx::MgitStandalone.new(['pull', '--ff-only', 'NNLibrary'])
+      default_command = CocoapodsPodx::MgitStandalone.new(['pull', 'AppLibrary'])
+      ff_only_command = CocoapodsPodx::MgitStandalone.new(['pull', '--ff-only', 'AppLibrary'])
 
       assert default_command.instance_variable_get(:@pull_mode)
       refute default_command.instance_variable_get(:@pull_ff_only)
-      assert_equal ['NNLibrary'], default_command.instance_variable_get(:@pod_names)
+      assert_equal ['AppLibrary'], default_command.instance_variable_get(:@pod_names)
       assert ff_only_command.instance_variable_get(:@pull_ff_only)
-      assert_equal ['NNLibrary'], ff_only_command.instance_variable_get(:@pod_names)
+      assert_equal ['AppLibrary'], ff_only_command.instance_variable_get(:@pod_names)
     end
   end
 
@@ -237,17 +237,17 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_mgit_local_repo_path_uses_existing_development_pods_without_podfile_parse
     Dir.mktmpdir('cocoapods-podx-mgit-fast-path') do |project_dir|
       FileUtils.mkdir_p(File.join(project_dir, '.git'))
-      FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'NNLibrary'))
+      FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'AppLibrary'))
 
       singleton = class << CocoapodsPodx::Runtime; self; end
       original = CocoapodsPodx::Runtime.method(:local_repo_folder_name_for)
       singleton.define_method(:local_repo_folder_name_for) { |_name| raise 'should not parse Podfile' }
 
       Dir.chdir(project_dir) do
-        command = CocoapodsPodx::MgitStandalone.new(['status', 'NNLibrary'])
+        command = CocoapodsPodx::MgitStandalone.new(['status', 'AppLibrary'])
         assert_equal(
-          File.realpath(File.join(project_dir, 'Development Pods', 'NNLibrary')),
-          command.send(:local_repo_path_for, 'NNLibrary')
+          File.realpath(File.join(project_dir, 'Development Pods', 'AppLibrary')),
+          command.send(:local_repo_path_for, 'AppLibrary')
         )
       end
     ensure
@@ -258,17 +258,17 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_mgit_local_repo_path_falls_back_to_runtime_for_group_repo_folder
     Dir.mktmpdir('cocoapods-podx-mgit-fallback-path') do |project_dir|
       FileUtils.mkdir_p(File.join(project_dir, '.git'))
-      FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'nnbusscom'))
+      FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'appfeaturekit'))
 
       singleton = class << CocoapodsPodx::Runtime; self; end
       original = CocoapodsPodx::Runtime.method(:local_repo_folder_name_for)
-      singleton.define_method(:local_repo_folder_name_for) { |_name| 'nnbusscom' }
+      singleton.define_method(:local_repo_folder_name_for) { |_name| 'appfeaturekit' }
 
       Dir.chdir(project_dir) do
-        command = CocoapodsPodx::MgitStandalone.new(['status', 'NNLogin'])
+        command = CocoapodsPodx::MgitStandalone.new(['status', 'AppLogin'])
         assert_equal(
-          File.realpath(File.join(project_dir, 'Development Pods', 'nnbusscom')),
-          command.send(:local_repo_path_for, 'NNLogin')
+          File.realpath(File.join(project_dir, 'Development Pods', 'appfeaturekit')),
+          command.send(:local_repo_path_for, 'AppLogin')
         )
       end
     ensure
@@ -306,20 +306,20 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_pod_overlay_accepts_pod_entries
     overlay = CocoapodsPodx::Runtime::PodOverlay.new
     overlay.instance_eval(<<~RUBY)
-      pod 'NNBussCom'
-      pod 'NNBasciCommon'
+      pod 'AppFeatureKit'
+      pod 'AppBaseKit'
     RUBY
 
-    assert_equal({}, overlay.config_for('NNBussCom'))
-    assert_equal({}, overlay.config_for('NNBasciCommon'))
+    assert_equal({}, overlay.config_for('AppFeatureKit'))
+    assert_equal({}, overlay.config_for('AppBaseKit'))
   end
 
   def test_remote_options_use_overrides_from_internal_pod
     options = with_stubbed_runtime_remote_commit('abcdef') do
-      CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+      CocoapodsPodx::Runtime.pod_options_for(name: 'AppLibrary')
     end
 
-    assert_equal 'http://git.example.com/nn_ios/nnyytext.git', options[:git]
+    assert_equal 'https://git.example.com/app_ios/apptextkit.git', options[:git]
     assert_equal 'develop', options[:branch]
     assert_equal false, options[:inhibit_warnings]
   end
@@ -329,7 +329,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     with_stubbed_runtime_remote_commit('abcdef') do
       output = capture_io do
-        CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+        CocoapodsPodx::Runtime.pod_options_for(name: 'AppLibrary')
       end.first
 
       assert_includes output, '【podx install】依赖来源'
@@ -340,12 +340,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       assert_includes output, '| 更新'
       assert_includes output, '| 状态'
       assert_includes output, '| 主仓库'
-      assert_includes output, '| NNLibrary'
+      assert_includes output, '| AppLibrary'
       assert_includes output, '| 远端'
       assert_includes output, '| develop'
       assert_includes output, '| abcdef'
       assert_includes output, '| 正常'
-      refute_includes output, 'http://git.example.com/nn_ios/nnyytext.git'
+      refute_includes output, 'https://git.example.com/app_ios/apptextkit.git'
     end
   end
 
@@ -366,7 +366,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     CocoapodsPodx::Runtime.configure(project_directory: project_dir)
 
     output = capture_io do
-      CocoapodsPodx::Runtime.send(:print_install_dependency_row, name: 'NNLibrary', source: '远端', branch: 'develop', commit: 'abcdef')
+      CocoapodsPodx::Runtime.send(:print_install_dependency_row, name: 'AppLibrary', source: '远端', branch: 'develop', commit: 'abcdef')
     end.first
 
     assert_match(/\| 主仓库\s+\| 本地 \| develop\s+\| #{Regexp.escape(commit)} \|/, output)
@@ -381,12 +381,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     output = with_stubbed_runtime_remote_commit('222222') do
       capture_io do
-        CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+        CocoapodsPodx::Runtime.pod_options_for(name: 'AppLibrary')
         CocoapodsPodx::Runtime.send(:print_install_dependency_table_footer)
       end.first
     end
 
-    assert_match(/\| NNLibrary\s+\| 远端 \| develop\s+\| 111111 \| 有更新 \| 正常 \|/, output)
+    assert_match(/\| AppLibrary\s+\| 远端 \| develop\s+\| 111111 \| 有更新 \| 正常 \|/, output)
     assert_includes output, '【podx install】提示 使用 podx install --repo-update'
   end
 
@@ -398,14 +398,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     output = with_stubbed_runtime_remote_commit('222222') do
       capture_io do
-        CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+        CocoapodsPodx::Runtime.pod_options_for(name: 'AppLibrary')
         CocoapodsPodx::Runtime.send(:print_install_dependency_table_footer)
       end.first
     end
 
-    assert_match(/\| NNLibrary\s+\| 远端 \| develop\s+\| 111111 \| 有更新 \| 正常 \|/, output)
+    assert_match(/\| AppLibrary\s+\| 远端 \| develop\s+\| 111111 \| 有更新 \| 正常 \|/, output)
     refute_includes output, '【podx install】提示 使用 podx install --repo-update'
-    assert_equal "NNLibrary\n", File.read(updates_file)
+    assert_equal "AppLibrary\n", File.read(updates_file)
   ensure
     ENV.delete('COCOAPODS_PODX_REPO_UPDATE')
     ENV.delete('COCOAPODS_PODX_REMOTE_UPDATES_FILE')
@@ -415,7 +415,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     output = capture_io do
       CocoapodsPodx::Runtime.send(
         :print_install_dependency_row,
-        name: 'NNLibrary',
+        name: 'AppLibrary',
         source: '本地',
         branch: 'develop',
         commit: 'abcdef',
@@ -432,7 +432,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_pod_install_runtime_table_lines_are_aligned
     with_stubbed_runtime_remote_commit('abcdef') do
       output = capture_io do
-        CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+        CocoapodsPodx::Runtime.pod_options_for(name: 'AppLibrary')
       end.first
 
       table_lines = output.lines.map(&:chomp).select { |line| line.start_with?('+', '|') }
@@ -483,32 +483,32 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_remote_repo_url_for_overlay_entries
     assert_equal(
-      'http://git.example.com/nn_ios/nnyytext.git',
-      CocoapodsPodx::Runtime.remote_repo_url_for('NNLibrary')
+      'https://git.example.com/app_ios/apptextkit.git',
+      CocoapodsPodx::Runtime.remote_repo_url_for('AppLibrary')
     )
     assert_equal(
-      'http://git.example.com/nn_ios/nnbusscom.git',
-      CocoapodsPodx::Runtime.remote_repo_url_for('NNBussCom')
+      'https://git.example.com/app_ios/appfeaturekit.git',
+      CocoapodsPodx::Runtime.remote_repo_url_for('AppFeatureKit')
     )
   end
 
   def test_dependency_report_shows_managed_branches_versions_and_dependencies
     File.write(File.join(@project_dir, 'Podfile.lock'), <<~YAML)
       PODS:
-        - NNApperance (0.1.0):
+        - AppAppearance (0.1.0):
           - Masonry
-        - NNLogin (0.1.0):
-          - NNApperance
+        - AppLogin (0.1.0):
+          - AppAppearance
           - Alamofire
         - Alamofire (5.8.0)
         - Masonry (1.1.0)
       DEPENDENCIES:
-        - NNApperance
-        - NNLogin
+        - AppAppearance
+        - AppLogin
         - Alamofire
       EXTERNAL SOURCES:
-        NNApperance:
-          :git: http://git.example.com/nn_ios/nnapperance.git
+        AppAppearance:
+          :git: https://git.example.com/app_ios/appappearance.git
     YAML
     helper = Class.new do
       include CocoapodsPodx::Commands::DependencyReport
@@ -524,14 +524,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     rows = helper.build_dependency_report_rows
 
-    assert_includes rows, ['NNApperance', '内部组件', 'develop', 'Masonry']
-    assert_includes rows, ['NNLogin', '内部组件', 'develop', 'NNApperance, Alamofire']
+    assert_includes rows, ['AppAppearance', '内部组件', 'develop', 'Masonry']
+    assert_includes rows, ['AppLogin', '内部组件', 'develop', 'AppAppearance, Alamofire']
     assert_includes rows, ['Alamofire', '三方库', '5.8.0', '-']
     summary_rows = helper.dependency_summary_rows(rows)
-    assert_includes summary_rows, ['NNLogin', '内部组件', 'develop', '2']
-    assert_operator summary_rows.index(['NNLogin', '内部组件', 'develop', '2']), :<, summary_rows.index(['Alamofire', '三方库', '5.8.0', '0'])
-    assert_includes helper.dependency_relation_rows(rows), ['NNLogin', 'NNApperance, Alamofire']
-    assert_equal ['NNApperance', 'NNLogin'], helper.dependency_relation_groups(rows).map { |group| group[:name] }
+    assert_includes summary_rows, ['AppLogin', '内部组件', 'develop', '2']
+    assert_operator summary_rows.index(['AppLogin', '内部组件', 'develop', '2']), :<, summary_rows.index(['Alamofire', '三方库', '5.8.0', '0'])
+    assert_includes helper.dependency_relation_rows(rows), ['AppLogin', 'AppAppearance, Alamofire']
+    assert_equal ['AppAppearance', 'AppLogin'], helper.dependency_relation_groups(rows).map { |group| group[:name] }
   end
 
   def test_skill_runtime_lists_and_verifies_shallow_skills
@@ -561,7 +561,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
     end.new(@project_dir)
 
@@ -600,7 +600,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
     end.new(@project_dir)
 
@@ -958,7 +958,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
     end.new(@project_dir)
 
@@ -1178,7 +1178,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
     end.new(@project_dir)
 
@@ -1251,7 +1251,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
     end.new(@project_dir)
 
@@ -1302,7 +1302,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
     end.new(@project_dir)
 
@@ -1345,7 +1345,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
     end.new(@project_dir)
 
@@ -1425,7 +1425,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
     end.new(@project_dir)
 
@@ -1512,7 +1512,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def print_box_table(_title, _headers, _rows); end
@@ -1622,9 +1622,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_equal '.mgit-publish', config[:publish_work_dir]
     assert_equal 'develop', config[:publish_base_branch]
     assert_equal false, config[:publish_pipeline_gate]
-    assert_equal 'nnios', config[:publish_main_repo]
+    assert_equal 'iosapp', config[:publish_main_repo]
     assert_equal true, config[:publish_update_podfile_branch]
-    assert_equal ['nnios', 'nnbusscom'], config[:publish_repos]
+    assert_equal ['iosapp', 'appfeaturekit'], config[:publish_repos]
     assert_equal 'ios_xcodeproj', config[:publish_version][:type]
     assert_equal '^release/(\\d+\\.\\d+\\.\\d+)$', config[:publish_version][:branch_pattern]
     assert_equal 'ios_semver', config[:publish_version][:build_number_strategy]
@@ -1632,72 +1632,72 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_project_config_selects_default_product_line
     File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
-      default_product_line: nnrtc
+      default_product_line: media
       shared:
-        git_base_url: http://git.example.com
+        git_base_url: https://git.example.com
       product_lines:
-        nn:
-          target_name: nn_ios
-          private_source: http://git.example.com/nn_ios/specs.git
-          overlay_file: Podfile.overlay.nn
-        nnrtc:
-          target_name: nnrtc_ios
-          private_source: http://git.example.com/nnrtc_ios/specs.git
-          overlay_file: Podfile.overlay.nnrtc
+        app:
+          target_name: app_ios
+          private_source: https://git.example.com/app_ios/specs.git
+          overlay_file: Podfile.overlay.app
+        media:
+          target_name: media_ios
+          private_source: https://git.example.com/media_ios/specs.git
+          overlay_file: Podfile.overlay.media
           publish:
-            work_dir: .mgit-publish/nnrtc
+            work_dir: .mgit-publish/media
             base_branch: develop
-            main_repo: nnrtc-ios
+            main_repo: media-ios
             repos:
-              - nnrtc-ios
-              - nnrtc-core
+              - media-ios
+              - media-core
             version:
               type: ios_xcodeproj
               branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$'
-              project_file: NNRtc.xcodeproj/project.pbxproj
+              project_file: AppRTC.xcodeproj/project.pbxproj
               build_number_strategy: ios_semver
           jenkins:
-            base_url: http://jenkins.example.com
-            default_job: nnrtc-ios-build
-            repo_url: http://git.example.com/nnrtc_ios/nnrtc-ios.git
+            base_url: https://jenkins.example.com
+            default_job: media-ios-build
+            repo_url: https://git.example.com/media_ios/media-ios.git
     YAML
 
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
     config = CocoapodsPodx::Runtime.config
 
-    assert_equal 'nnrtc', config[:product_line_id]
-    assert_equal 'nnrtc_ios', config[:target_name]
-    assert_equal 'http://git.example.com', config[:git_base_url]
-    assert_equal 'http://git.example.com/nnrtc_ios/specs.git', config[:private_source]
-    assert_equal File.join(@project_dir, 'Podfile.overlay.nnrtc'), CocoapodsPodx::Runtime.send(:overlay_path)
-    assert_equal '.mgit-publish/nnrtc', config[:publish_work_dir]
-    assert_equal ['nnrtc-ios', 'nnrtc-core'], config[:publish_repos]
-    assert_equal 'nnrtc-ios-build', config[:jenkins_job]
-    assert_equal 'http://jenkins.example.com', config[:jenkins_base_url]
+    assert_equal 'media', config[:product_line_id]
+    assert_equal 'media_ios', config[:target_name]
+    assert_equal 'https://git.example.com', config[:git_base_url]
+    assert_equal 'https://git.example.com/media_ios/specs.git', config[:private_source]
+    assert_equal File.join(@project_dir, 'Podfile.overlay.media'), CocoapodsPodx::Runtime.send(:overlay_path)
+    assert_equal '.mgit-publish/media', config[:publish_work_dir]
+    assert_equal ['media-ios', 'media-core'], config[:publish_repos]
+    assert_equal 'media-ios-build', config[:jenkins_job]
+    assert_equal 'https://jenkins.example.com', config[:jenkins_base_url]
   ensure
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
   end
 
   def test_project_config_selects_product_line_from_env
     previous = ENV['PODX_PRODUCT_LINE']
-    ENV['PODX_PRODUCT_LINE'] = 'nn'
+    ENV['PODX_PRODUCT_LINE'] = 'app'
     File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
-      default_product_line: nnrtc
+      default_product_line: media
       product_lines:
-        nn:
-          target_name: nn_ios
-          private_source: http://git.example.com/nn_ios/specs.git
-          git_base_url: http://git.example.com
-        nnrtc:
-          target_name: nnrtc_ios
-          private_source: http://git.example.com/nnrtc_ios/specs.git
-          git_base_url: http://git.example.com
+        app:
+          target_name: app_ios
+          private_source: https://git.example.com/app_ios/specs.git
+          git_base_url: https://git.example.com
+        media:
+          target_name: media_ios
+          private_source: https://git.example.com/media_ios/specs.git
+          git_base_url: https://git.example.com
     YAML
 
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
 
-    assert_equal 'nn', CocoapodsPodx::Runtime.config[:product_line_id]
-    assert_equal 'nn_ios', CocoapodsPodx::Runtime.config[:target_name]
+    assert_equal 'app', CocoapodsPodx::Runtime.config[:product_line_id]
+    assert_equal 'app_ios', CocoapodsPodx::Runtime.config[:target_name]
   ensure
     if previous.nil?
       ENV.delete('PODX_PRODUCT_LINE')
@@ -1717,13 +1717,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
           project_id: alpha-ios
           bundle_id: com.example.alpha
           PODX_TARGET_NAME: alpha_ios
-          PODX_PRIVATE_SOURCE: http://git.example.com/alpha/specs.git
-          PODX_GIT_BASE_URL: http://git.example.com
+          PODX_PRIVATE_SOURCE: https://git.example.com/alpha/specs.git
+          PODX_GIT_BASE_URL: https://git.example.com
           PODX_OVERLAY_FILE: Podfile.overlay.alpha
           PODX_PUBLISH_REPOS: "alpha-ios, alpha-core"
           JENKINS_BASE_URL: http://jenkins-alpha.example.com
-          JENKINS_NN_JOB: alpha/app-build
-          JENKINS_NN_REPO_URL: http://git.example.com/alpha/alpha-ios.git
+          PODX_JENKINS_JOB: alpha/app-build
+          PODX_JENKINS_REPO_URL: https://git.example.com/alpha/alpha-ios.git
     YAML
 
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
@@ -1731,70 +1731,70 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_equal 'alpha', config[:product_line_id]
     assert_equal 'alpha_ios', config[:target_name]
-    assert_equal 'http://git.example.com/alpha/specs.git', config[:private_source]
+    assert_equal 'https://git.example.com/alpha/specs.git', config[:private_source]
     assert_equal File.join(@project_dir, 'Podfile.overlay.alpha'), CocoapodsPodx::Runtime.send(:overlay_path)
     assert_equal ['alpha-ios', 'alpha-core'], config[:publish_repos]
     assert_equal 'http://jenkins-alpha.example.com', config[:jenkins_base_url]
     assert_equal 'alpha/app-build', config[:jenkins_job]
-    assert_equal 'http://git.example.com/alpha/alpha-ios.git', config[:jenkins_repo_url]
+    assert_equal 'https://git.example.com/alpha/alpha-ios.git', config[:jenkins_repo_url]
   ensure
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
   end
 
   def test_product_line_nested_config_overrides_legacy_flat_config
     File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
-      default_product_line: nnrtc
+      default_product_line: media
       publish_work_dir: .mgit-publish/legacy
       publish_repos:
         - legacy-ios
       publish_pipeline_gate: false
       jenkins_job: legacy-build
       product_lines:
-        nnrtc:
-          target_name: nnrtc_ios
-          private_source: http://git.example.com/nnrtc_ios/specs.git
-          git_base_url: http://git.example.com
+        media:
+          target_name: media_ios
+          private_source: https://git.example.com/media_ios/specs.git
+          git_base_url: https://git.example.com
           publish:
-            work_dir: .mgit-publish/nnrtc
+            work_dir: .mgit-publish/media
             pipeline_gate: true
             repos:
-              - nnrtc-ios
+              - media-ios
           jenkins:
-            default_job: nnrtc-build
+            default_job: media-build
     YAML
 
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
     config = CocoapodsPodx::Runtime.config
 
-    assert_equal '.mgit-publish/nnrtc', config[:publish_work_dir]
-    assert_equal ['nnrtc-ios'], config[:publish_repos]
+    assert_equal '.mgit-publish/media', config[:publish_work_dir]
+    assert_equal ['media-ios'], config[:publish_repos]
     assert_equal true, config[:publish_pipeline_gate]
-    assert_equal 'nnrtc-build', config[:jenkins_job]
+    assert_equal 'media-build', config[:jenkins_job]
   ensure
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
   end
 
   def test_mgit_standalone_accepts_product_line_global_option
     File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
-      default_product_line: nn
+      default_product_line: app
       product_lines:
-        nn:
-          target_name: nn_ios
-          private_source: http://git.example.com/nn_ios/specs.git
-          git_base_url: http://git.example.com
-        nnrtc:
-          target_name: nnrtc_ios
-          private_source: http://git.example.com/nnrtc_ios/specs.git
-          git_base_url: http://git.example.com
-          overlay_file: Podfile.overlay.nnrtc
+        app:
+          target_name: app_ios
+          private_source: https://git.example.com/app_ios/specs.git
+          git_base_url: https://git.example.com
+        media:
+          target_name: media_ios
+          private_source: https://git.example.com/media_ios/specs.git
+          git_base_url: https://git.example.com
+          overlay_file: Podfile.overlay.media
     YAML
 
     Dir.chdir(@project_dir) do
-      command = CocoapodsPodx::MgitStandalone.new(['--line', 'nnrtc', 'status'])
+      command = CocoapodsPodx::MgitStandalone.new(['--line', 'media', 'status'])
 
       assert command.instance_variable_get(:@status_mode)
-      assert_equal 'nnrtc', CocoapodsPodx::Runtime.config[:product_line_id]
-      assert_equal File.join(File.realpath(@project_dir), 'Podfile.overlay.nnrtc'), command.send(:overlay_path)
+      assert_equal 'media', CocoapodsPodx::Runtime.config[:product_line_id]
+      assert_equal File.join(File.realpath(@project_dir), 'Podfile.overlay.media'), command.send(:overlay_path)
     end
   ensure
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir) if @project_dir
@@ -1808,8 +1808,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     legacy_dir = Dir.mktmpdir('cocoapods-podx-legacy-config')
     File.write(File.join(legacy_dir, 'Podfile.overlay.config.yml'), <<~YAML)
       target_name: legacy
-      private_source: http://git.example.com/legacy/specs.git
-      git_base_url: http://git.example.com
+      private_source: https://git.example.com/legacy/specs.git
+      git_base_url: https://git.example.com
     YAML
 
     CocoapodsPodx::Runtime.configure(project_directory: legacy_dir)
@@ -1853,12 +1853,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_shim_generator_reads_bin_templates
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'pod 扩展命令'
-    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx workon NNBussCom'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx workon AppFeatureKit'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx ship [pgyer|tf|app]'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx tools'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx install --repo-update'
-    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx clean NNRtc'
-    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx cache clean NNRtc'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx clean AppRTC'
+    assert_includes CocoapodsPodx::ShimGenerator.podx, 'podx cache clean AppRTC'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'cache)'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_overlay --clean "$@"'
     assert_includes CocoapodsPodx::ShimGenerator.podx, 'run_pod_install_with_auto_fix "$@"'
@@ -2112,24 +2112,24 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_ai_bootstrap_codegraph_ignore_keeps_only_overlay_local_development_pods
     ai_dir = Dir.mktmpdir('cocoapods-podx-ai-codegraph-ignore')
-    File.write(File.join(ai_dir, 'Podfile.overlay'), "pod 'NNBussCom'\n")
+    File.write(File.join(ai_dir, 'Podfile.overlay'), "pod 'AppFeatureKit'\n")
     File.write(File.join(ai_dir, 'Podfile'), <<~RUBY)
-      pod 'NNLogin', :branch => 'develop', :group_name => 'NNBussCom'
-      pod 'NNBasciCommon', :branch => 'develop'
+      pod 'AppLogin', :branch => 'develop', :group_name => 'AppFeatureKit'
+      pod 'AppBaseKit', :branch => 'develop'
     RUBY
-    FileUtils.mkdir_p(File.join(ai_dir, 'Development Pods', 'nnbusscom'))
-    FileUtils.mkdir_p(File.join(ai_dir, 'Development Pods', 'nnbascicommon'))
+    FileUtils.mkdir_p(File.join(ai_dir, 'Development Pods', 'appfeaturekit'))
+    FileUtils.mkdir_p(File.join(ai_dir, 'Development Pods', 'appbasekit'))
 
     CocoapodsPodx::AiBootstrap.init(ai_dir, force: false)
     script = File.join(ai_dir, '.claude', 'mcps', 'update-codegraph.sh')
     assert system({ 'CODE_REVIEW_GRAPH_BIN' => '/usr/bin/true' }, '/bin/sh', script)
 
     ignore = File.read(File.join(ai_dir, '.code-review-graphignore'))
-    assert_includes ignore, 'Pods/NNBussCom/**'
-    assert_includes ignore, 'Pods/NNLogin/**'
-    assert_includes ignore, 'Development Pods/nnbascicommon/**'
-    refute_includes ignore, 'Pods/NNBasciCommon/**'
-    refute_includes ignore, 'Development Pods/nnbusscom/**'
+    assert_includes ignore, 'Pods/AppFeatureKit/**'
+    assert_includes ignore, 'Pods/AppLogin/**'
+    assert_includes ignore, 'Development Pods/appbasekit/**'
+    refute_includes ignore, 'Pods/AppBaseKit/**'
+    refute_includes ignore, 'Development Pods/appfeaturekit/**'
   ensure
     FileUtils.rm_rf(ai_dir) if ai_dir
   end
@@ -2210,21 +2210,21 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     parser.extend(CocoapodsPodx::Commands::JenkinsPublish)
 
     lines = <<~LOG.lines.map(&:strip).reject(&:empty?)
-      [!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/nn/Podfile.overlay.config.yml.
-       #  from /Users/a1/.jenkins/workspace/nn/Podfile:7
+      [!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/app/Podfile.overlay.config.yml.
+       #  from /Users/a1/.jenkins/workspace/app/Podfile:7
        #  -------------------------------------------
        >  source private_source
        #  #source mirror_source
        #  -------------------------------------------
       [ERROR] CocoaPods依赖安装失败
-      [ERROR]   1. 检查 git.leigod.top 网络连通性
+      [ERROR]   1. 检查 git.example.com 网络连通性
       Build step 'Execute shell' marked build as failure
       Finished: FAILURE
     LOG
 
     failure_lines = parser.jenkins_primary_failure_lines(lines)
 
-    assert_equal '[!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/nn/Podfile.overlay.config.yml.', failure_lines.first
+    assert_equal '[!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/app/Podfile.overlay.config.yml.', failure_lines.first
     assert_includes failure_lines, '>  source private_source'
     refute_includes failure_lines, "Build step 'Execute shell' marked build as failure"
   end
@@ -2246,7 +2246,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def request_jenkins(uri, _request, open_timeout: nil, read_timeout: nil)
@@ -2268,8 +2268,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       logger.show_jenkins_build_log
     end
 
-    assert_equal 'http://jenkins.example.com/job/nn/lastBuild/consoleText', logger.requested_url
-    assert_includes output, '【Jenkins日志】http://jenkins.example.com/job/nn/lastBuild/consoleText'
+    assert_equal 'https://jenkins.example.com/job/app/lastBuild/consoleText', logger.requested_url
+    assert_includes output, '【Jenkins日志】https://jenkins.example.com/job/app/lastBuild/consoleText'
     assert_includes output, '【日志文件】'
     refute_includes output, 'line1'
     refute_includes output, 'line2'
@@ -2297,11 +2297,11 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://10.1.2.175:8080/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def request_jenkins(_uri, _request, open_timeout: nil, read_timeout: nil)
-        raise Errno::EPERM, 'Operation not permitted - connect(2) for "10.1.2.175" port 8080'
+        raise Errno::EPERM, 'Operation not permitted - connect(2) for "jenkins.example.com" port 8080'
       end
     end.new(@project_dir)
 
@@ -2310,7 +2310,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_includes error.message, '无法连接 Jenkins'
-    assert_includes error.message, '10.1.2.175'
+    assert_includes error.message, 'jenkins.example.com'
     assert_includes error.message, '普通终端执行或授权网络访问'
   end
 
@@ -2331,7 +2331,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def configured_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def request_jenkins(uri, _request, open_timeout: nil, read_timeout: nil)
@@ -2377,7 +2377,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def configured_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def jenkins_json(uri)
@@ -2443,7 +2443,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_includes history.requested_url, 'api/json?tree=builds'
     assert_includes history.requested_url, '{0,2}'
-    assert_includes output, '【Jenkins任务】http://jenkins.example.com/job/nn/'
+    assert_includes output, '【Jenkins任务】https://jenkins.example.com/job/app/'
     assert_includes output, '【最近构建】2'
     assert_includes output, '| 构建号'
     assert_includes output, '#1274'
@@ -2483,7 +2483,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def configured_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def jenkins_json(uri)
@@ -2542,15 +2542,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def request_jenkins(_uri, _request, open_timeout: nil, read_timeout: nil)
         response = Net::HTTPOK.new('1.1', '200', 'OK')
         response.instance_variable_set(:@read, true)
         response.instance_variable_set(:@body, <<~LOG)
-          [!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/nn/Podfile.overlay.config.yml.
-           #  from /Users/a1/.jenkins/workspace/nn/Podfile:7
+          [!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/app/Podfile.overlay.config.yml.
+           #  from /Users/a1/.jenkins/workspace/app/Podfile:7
            >  source private_source
           [ERROR] CocoaPods依赖安装失败
           Finished: FAILURE
@@ -2565,7 +2565,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       doctor.doctor_jenkins_build
     end
 
-    assert_includes output, '【Jenkins日志】http://jenkins.example.com/job/nn/lastBuild/consoleText'
+    assert_includes output, '【Jenkins日志】https://jenkins.example.com/job/app/lastBuild/consoleText'
     assert_includes output, '【失败分类】CocoaPods 配置'
     assert_includes output, 'Podfile.overlay.config.yml'
     assert_includes output, '【修复建议】优先检查打包机 cocoapods-podx 版本；如果版本过旧，请先在 Jenkins 打包机升级到最新版本。'
@@ -2590,14 +2590,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def request_jenkins(_uri, _request, open_timeout: nil, read_timeout: nil)
         response = Net::HTTPOK.new('1.1', '200', 'OK')
         response.instance_variable_set(:@read, true)
         response.instance_variable_set(:@body, <<~LOG)
-          [!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/nn/Podfile.overlay.config.yml.
+          [!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/app/Podfile.overlay.config.yml.
           Finished: FAILURE
         LOG
         response
@@ -2635,14 +2635,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def selected_jenkins_job_url
-        'http://jenkins.example.com/job/nn/'
+        'https://jenkins.example.com/job/app/'
       end
 
       def request_jenkins(_uri, _request, open_timeout: nil, read_timeout: nil)
         response = Net::HTTPOK.new('1.1', '200', 'OK')
         response.instance_variable_set(:@read, true)
         response.instance_variable_set(:@body, <<~LOG)
-          [!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/nn/Podfile.overlay.config.yml.
+          [!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/app/Podfile.overlay.config.yml.
           Finished: FAILURE
         LOG
         response
@@ -2690,17 +2690,17 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         @requested_urls << uri.to_s
         response = Net::HTTPFound.new('1.1', '302', 'Found')
         response.instance_variable_set(:@read, true)
-        response['Location'] = 'http://jenkins.example.com/queue/item/1/'
+        response['Location'] = 'https://jenkins.example.com/queue/item/1/'
         response
       end
 
       def wait_for_jenkins_result(*); end
     end.new
 
-    fixer.trigger_jenkins_fix_job_with_url('http://jenkins.example.com/job/pod-upgrade/')
+    fixer.trigger_jenkins_fix_job_with_url('https://jenkins.example.com/job/pod-upgrade/')
 
     assert_equal(
-      ['http://jenkins.example.com/job/pod-upgrade/build'],
+      ['https://jenkins.example.com/job/pod-upgrade/build'],
       fixer.requested_urls
     )
   end
@@ -2723,7 +2723,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
           response = Net::HTTPBadRequest.new('1.1', '400', 'Bad Request')
         else
           response = Net::HTTPFound.new('1.1', '302', 'Found')
-          response['Location'] = 'http://jenkins.example.com/queue/item/1/'
+          response['Location'] = 'https://jenkins.example.com/queue/item/1/'
         end
         response.instance_variable_set(:@read, true)
         response
@@ -2732,12 +2732,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def wait_for_jenkins_result(*); end
     end.new
 
-    fixer.trigger_jenkins_fix_job_with_url('http://jenkins.example.com/job/pod-upgrade/')
+    fixer.trigger_jenkins_fix_job_with_url('https://jenkins.example.com/job/pod-upgrade/')
 
     assert_equal(
       [
-        'http://jenkins.example.com/job/pod-upgrade/build',
-        'http://jenkins.example.com/job/pod-upgrade/buildWithParameters'
+        'https://jenkins.example.com/job/pod-upgrade/build',
+        'https://jenkins.example.com/job/pod-upgrade/buildWithParameters'
       ],
       fixer.requested_urls
     )
@@ -2763,7 +2763,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
       def jenkins_failure_lines(_build_url)
         [
-          '[!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/nn/Podfile.overlay.config.yml.',
+          '[!] Invalid `Podfile` file: 未找到 overlay 配置文件：/Users/a1/.jenkins/workspace/app/Podfile.overlay.config.yml.',
           'Finished: FAILURE'
         ]
       end
@@ -2782,7 +2782,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
       assert_raises(CocoapodsPodx::Commands::JenkinsPublish::JenkinsAutoFixApplied) do
-        publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1/', 1, '蒲公英')
+        publisher.wait_for_jenkins_build('https://jenkins.example.com/job/app/1/', 1, '蒲公英')
       end
     end
 
@@ -2827,7 +2827,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
       assert_raises(Pod::Informative) do
-        publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1/', 1, '蒲公英')
+        publisher.wait_for_jenkins_build('https://jenkins.example.com/job/app/1/', 1, '蒲公英')
       end
     end
 
@@ -2848,7 +2848,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         response.instance_variable_set(:@read, true)
         response['X-Text-Size'] = '128'
         response.body = [
-          'Building in workspace /Users/a1/.jenkins/workspace/nn',
+          'Building in workspace /Users/a1/.jenkins/workspace/app',
           '▸ Compiling LoginLogic.swift',
           'Successfully uploaded package to App Store Connect'
         ].join("\n")
@@ -2859,7 +2859,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      offset = publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 0)
+      offset = publisher.print_jenkins_progress_log('https://jenkins.example.com/job/app/1/', 0)
       assert_equal 128, offset
     end
 
@@ -2886,8 +2886,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 0)
-      publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 128)
+      publisher.print_jenkins_progress_log('https://jenkins.example.com/job/app/1/', 0)
+      publisher.print_jenkins_progress_log('https://jenkins.example.com/job/app/1/', 128)
     end
 
     assert_equal 1, output.scan('▸ Compiling LoginLogic.swift').length
@@ -2965,7 +2965,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1337/', 1337, '蒲公英')
+      publisher.wait_for_jenkins_build('https://jenkins.example.com/job/app/1337/', 1337, '蒲公英')
     end
 
     assert_includes output, '【打包结果】成功 蒲公英 #1337'
@@ -3024,7 +3024,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
       assert_raises(CocoapodsPodx::Commands::JenkinsPublish::JenkinsAutoFixApplied) do
-        publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1/', 1, '蒲公英')
+        publisher.wait_for_jenkins_build('https://jenkins.example.com/job/app/1/', 1, '蒲公英')
       end
     end
 
@@ -3060,7 +3060,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def jenkins_failure_lines(_build_url)
-        ['[!] Unable to satisfy the following requirements:', '- `NNLibrary (= 1.0.0)` required by `Podfile`', 'Finished: FAILURE']
+        ['[!] Unable to satisfy the following requirements:', '- `AppLibrary (= 1.0.0)` required by `Podfile`', 'Finished: FAILURE']
       end
 
       def execute_remote_jenkins_fix_action(action)
@@ -3073,7 +3073,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
       assert_raises(CocoapodsPodx::Commands::JenkinsPublish::JenkinsAutoFixApplied) do
-        publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1/', 1, '蒲公英')
+        publisher.wait_for_jenkins_build('https://jenkins.example.com/job/app/1/', 1, '蒲公英')
       end
     end
 
@@ -3122,7 +3122,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
       assert_raises(Pod::Informative) do
-        publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1/', 1, '蒲公英')
+        publisher.wait_for_jenkins_build('https://jenkins.example.com/job/app/1/', 1, '蒲公英')
       end
     end
 
@@ -3173,7 +3173,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
       assert_raises(CocoapodsPodx::Commands::JenkinsPublish::JenkinsAutoFixApplied) do
-        publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1/', 1, '蒲公英')
+        publisher.wait_for_jenkins_build('https://jenkins.example.com/job/app/1/', 1, '蒲公英')
       end
     end
 
@@ -3193,8 +3193,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end.new
 
     report = helper.analyze_jenkins_failure([
-      "ERROR ITMS-90060: This bundle is invalid. The value for key CFBundleShortVersionString '1.5.0.0' in the Info.plist file at 'Payload/NNIM.app/Frameworks/libwebp.framework' must be a period-separated list of at most three non-negative integers.",
-      "ERROR ITMS-90208: Invalid MinimumOSVersion. The MinimumOSVersion '' in 'Payload/NNIM.app/Frameworks/libwebp.framework' is invalid."
+      "ERROR ITMS-90060: This bundle is invalid. The value for key CFBundleShortVersionString '1.5.0.0' in the Info.plist file at 'Payload/AppIM.app/Frameworks/libwebp.framework' must be a period-separated list of at most three non-negative integers.",
+      "ERROR ITMS-90208: Invalid MinimumOSVersion. The MinimumOSVersion '' in 'Payload/AppIM.app/Frameworks/libwebp.framework' is invalid."
     ])
 
     assert_equal 'App Store Framework 元数据', report[:type]
@@ -3227,8 +3227,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
       def jenkins_failure_lines(_build_url)
         [
-          "ERROR ITMS-90060: CFBundleShortVersionString '1.5.0.0' in Payload/NNIM.app/Frameworks/libwebp.framework is invalid.",
-          "ERROR ITMS-90208: Invalid MinimumOSVersion in Payload/NNIM.app/Frameworks/libwebp.framework is ''.",
+          "ERROR ITMS-90060: CFBundleShortVersionString '1.5.0.0' in Payload/AppIM.app/Frameworks/libwebp.framework is invalid.",
+          "ERROR ITMS-90208: Invalid MinimumOSVersion in Payload/AppIM.app/Frameworks/libwebp.framework is ''.",
           'Finished: FAILURE'
         ]
       end
@@ -3243,7 +3243,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
       assert_raises(CocoapodsPodx::Commands::JenkinsPublish::JenkinsAutoFixApplied) do
-        publisher.wait_for_jenkins_build('http://jenkins.example.com/job/nn/1/', 1, 'TestFlight')
+        publisher.wait_for_jenkins_build('https://jenkins.example.com/job/app/1/', 1, 'TestFlight')
       end
     end
 
@@ -3332,7 +3332,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def trigger_jenkins_build_with_auto_fix_retry(_params, _target_name); end
 
       def load_entries
-        [{ name: 'NNBussCom' }, { name: 'NNBasciCommon' }]
+        [{ name: 'AppFeatureKit' }, { name: 'AppBaseKit' }]
       end
 
       def update_local_repo(name, dry_run:, pull:, expected_branch:, quiet:)
@@ -3575,7 +3575,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def validate_jenkins_publish_context!; end
 
       def jenkins_publish_job_profile
-        { default_channel: 'pgyer', job_name: 'nn' }
+        { default_channel: 'pgyer', job_name: 'app' }
       end
 
       def jenkins_deploy_target(_channel)
@@ -3613,15 +3613,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     lock_dir = File.join(@project_dir, '.podx', 'locks')
     FileUtils.mkdir_p(lock_dir)
-    lock_path = File.join(lock_dir, 'publish-nn.lock')
+    lock_path = File.join(lock_dir, 'publish-app.lock')
     lock = File.open(lock_path, File::RDWR | File::CREAT, 0o644)
-    lock.write("pid=123\njob=nn\nbranch=origin/develop\nchannels=pgyer\nstarted_at=2026-05-29 10:00:00\n")
+    lock.write("pid=123\njob=app\nbranch=origin/develop\nchannels=pgyer\nstarted_at=2026-05-29 10:00:00\n")
     lock.flush
     lock.flock(File::LOCK_EX)
 
     error = assert_raises(Pod::Informative) { publisher.publish_to_jenkins }
     assert_includes error.message, '当前工程已有 podx publish 正在执行'
-    assert_includes error.message, 'job nn'
+    assert_includes error.message, 'job app'
     refute publisher.triggered
   ensure
     lock&.flock(File::LOCK_UN)
@@ -3649,7 +3649,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def validate_jenkins_publish_context!; end
 
       def jenkins_publish_job_profile
-        { default_channel: 'pgyer', job_name: 'nn' }
+        { default_channel: 'pgyer', job_name: 'app' }
       end
 
       def jenkins_deploy_target(_channel)
@@ -3687,7 +3687,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     lock_dir = File.join(@project_dir, '.podx', 'locks')
     FileUtils.mkdir_p(lock_dir)
-    lock_path = File.join(lock_dir, 'publish-nn.lock')
+    lock_path = File.join(lock_dir, 'publish-app.lock')
     lock = File.open(lock_path, File::RDWR | File::CREAT, 0o644)
     lock.flock(File::LOCK_EX)
 
@@ -3704,7 +3704,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       include CocoapodsPodx::Commands::JenkinsPublish
 
       def configured_jenkins_job_url
-        'http://jenkins.example.com/job/first/'
+        'https://jenkins.example.com/job/first/'
       end
 
       def trigger_jenkins_build_with_url(job_url, _params, _target_name)
@@ -3720,7 +3720,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
     end
 
-    assert_includes output, 'Jenkins 地址不可用：http://jenkins.example.com/job/first/'
+    assert_includes output, 'Jenkins 地址不可用：https://jenkins.example.com/job/first/'
     refute_includes output, '切换备用'
     refute_includes output, 'second'
   ensure
@@ -3738,8 +3738,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         response['X-Text-Size'] = '321'
         response.instance_variable_set(:@read, true)
         response.body = [
-          '[11:54:50]: Set Team id to: M4HNX7MUD2 for target: NNIM for build configuration: Debug',
-          '$ xcodebuild -resolvePackageDependencies -workspace /Users/a1/.jenkins/workspace/nn/NNIM.xcworkspace',
+          '[11:54:50]: Set Team id to: M4HNX7MUD2 for target: AppIM for build configuration: Debug',
+          '$ xcodebuild -resolvePackageDependencies -workspace /Users/a1/.jenkins/workspace/app/AppIM.xcworkspace',
           'ERROR: Failed to load AuthKey file.'
         ].join("\n")
         response
@@ -3749,7 +3749,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      assert_equal 321, publisher.print_jenkins_progress_log('http://jenkins.example.com/job/nn/1/', 0)
+      assert_equal 321, publisher.print_jenkins_progress_log('https://jenkins.example.com/job/app/1/', 0)
     end
 
     assert_includes output, '【打包进度】ERROR: Failed to load AuthKey file.'
@@ -3763,7 +3763,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       include CocoapodsPodx::Commands::JenkinsPublish
 
       def configured_jenkins_job_url
-        'http://jenkins.example.com/job/second/'
+        'https://jenkins.example.com/job/second/'
       end
 
       def jenkins_job_available?(job_url)
@@ -3779,10 +3779,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     prepare_lines = output.lines.select { |line| line.include?('【打包准备】') }
     assert_equal 1, prepare_lines.length
-    refute_includes output, '【打包准备】探测 Jenkins http://jenkins.example.com/job/first/'
-    refute_includes output, '【打包准备】Jenkins 不可用 http://jenkins.example.com/job/first/'
-    assert_includes prepare_lines.first, '【打包准备】Jenkins 可用 http://jenkins.example.com/job/second/'
-    assert_includes output, '【打包服务】http://jenkins.example.com/job/second/'
+    refute_includes output, '【打包准备】探测 Jenkins https://jenkins.example.com/job/first/'
+    refute_includes output, '【打包准备】Jenkins 不可用 https://jenkins.example.com/job/first/'
+    assert_includes prepare_lines.first, '【打包准备】Jenkins 可用 https://jenkins.example.com/job/second/'
+    assert_includes output, '【打包服务】https://jenkins.example.com/job/second/'
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
   end
@@ -3801,21 +3801,21 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def git_repository_name
-        'nnios'
+        'iosapp'
       end
 
       def main_remote_url
-        'http://git.example.com/nn_ios/nnios.git'
+        'https://git.example.com/app_ios/iosapp.git'
       end
 
       def publish_private_repo_names
-        %w[NNApperance NNLibrary]
+        %w[AppAppearance AppLibrary]
       end
     end.new
 
     items = publisher.publish_remote_repo_items('origin/develop')
 
-    assert_equal ['nnios', 'NNApperance', 'NNLibrary'], items.map { |item| item[:repo] }
+    assert_equal ['iosapp', 'AppAppearance', 'AppLibrary'], items.map { |item| item[:repo] }
     assert_equal ['develop', 'develop', 'develop'], items.map { |item| item[:branch] }
   end
 
@@ -3826,7 +3826,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       attr_reader :attempts
 
       def initialize
-        @selected_jenkins_job_url = 'http://jenkins.example.com/job/second/'
+        @selected_jenkins_job_url = 'https://jenkins.example.com/job/second/'
         @attempts = []
       end
 
@@ -3838,7 +3838,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     publisher.trigger_jenkins_build({ 'branch' => 'origin/develop' }, '蒲公英')
 
-    assert_equal ['http://jenkins.example.com/job/second/'], publisher.attempts
+    assert_equal ['https://jenkins.example.com/job/second/'], publisher.attempts
   end
 
   def test_jenkins_trigger_without_queue_location_falls_back_to_job_builds
@@ -3867,9 +3867,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
     end.new
 
-    publisher.trigger_jenkins_build_with_url('http://jenkins.example.com/job/nn/', { 'branch' => 'origin/develop' }, '蒲公英')
+    publisher.trigger_jenkins_build_with_url('https://jenkins.example.com/job/app/', { 'branch' => 'origin/develop' }, '蒲公英')
 
-    assert_equal ['http://jenkins.example.com/job/nn/', 1431, '蒲公英'], publisher.fallback
+    assert_equal ['https://jenkins.example.com/job/app/', 1431, '蒲公英'], publisher.fallback
   end
 
   def test_jenkins_started_build_waits_for_new_build_number
@@ -3881,8 +3881,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def jenkins_json(_uri)
         {
           'builds' => [
-            { 'number' => 1432, 'url' => 'http://jenkins.example.com/job/nn/1432/' },
-            { 'number' => 1431, 'url' => 'http://jenkins.example.com/job/nn/1431/' }
+            { 'number' => 1432, 'url' => 'https://jenkins.example.com/job/app/1432/' },
+            { 'number' => 1431, 'url' => 'https://jenkins.example.com/job/app/1431/' }
           ]
         }
       end
@@ -3892,9 +3892,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
     end.new
 
-    publisher.wait_for_jenkins_started_build('http://jenkins.example.com/job/nn/', 1431, '蒲公英')
+    publisher.wait_for_jenkins_started_build('https://jenkins.example.com/job/app/', 1431, '蒲公英')
 
-    assert_equal ['http://jenkins.example.com/job/nn/1432/', 1432, '蒲公英'], publisher.waited
+    assert_equal ['https://jenkins.example.com/job/app/1432/', 1432, '蒲公英'], publisher.waited
   end
 
   def test_jenkins_timeout_defaults_allow_slow_intranet_server
@@ -3914,7 +3914,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     report = {
       type: 'CocoaPods 配置',
-      reason: 'missing config at /Users/a1/.jenkins/workspace/nn/Podfile.overlay.config.yml'
+      reason: 'missing config at /Users/a1/.jenkins/workspace/app/Podfile.overlay.config.yml'
     }
     prompt = helper.hermes_publish_evolution_prompt(
       event: 'publish_failed',
@@ -3923,15 +3923,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       build_number: 1274,
       result: 'FAILURE',
       failure_lines: [
-        'See http://10.1.2.175:8080/job/nn/1274/console',
-        'password=admin123 token=abcdef /Users/a1/.jenkins/workspace/nn/Podfile'
+        'See https://jenkins.example.com/job/app/1274/console',
+        'password=secret-value token=abcdef /Users/a1/.jenkins/workspace/app/Podfile'
       ],
-      auto_fix: { key: :jenkins_upgrade_podx, job: 'http://10.1.2.175:8080/job/pod-upgrade/' },
+      auto_fix: { key: :jenkins_upgrade_podx, job: 'https://jenkins.example.com/job/pod-upgrade/' },
       error: nil
     )
 
-    refute_includes prompt, '10.1.2.175'
-    refute_includes prompt, 'admin123'
+    refute_includes prompt, 'jenkins.example.com'
+    refute_includes prompt, 'secret-value'
     refute_includes prompt, 'abcdef'
     refute_includes prompt, '/Users/a1'
     assert_includes prompt, '[URL]'
@@ -3958,14 +3958,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def configured_jenkins_job_name
-        'nn'
+        'app'
       end
     end.new
 
     report = {
       type: 'App Store Framework 元数据',
-      reason: "ERROR ITMS-90060: http://10.1.2.175/job/nn Payload/NNIM.app/Frameworks/libwebp.framework",
-      evidence: ["CFBundleShortVersionString '1.5.0.0' in /Users/a1/workspace/nn/libwebp.framework is invalid."],
+      reason: "ERROR ITMS-90060: https://jenkins.example.com/job/app Payload/AppIM.app/Frameworks/libwebp.framework",
+      evidence: ["CFBundleShortVersionString '1.5.0.0' in /Users/a1/workspace/app/libwebp.framework is invalid."],
       suggestions: ['修复 framework Info.plist']
     }
 
@@ -3978,7 +3978,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         target_name: 'TestFlight',
         build_number: 1203,
         result: 'FAILURE',
-        failure_lines: ['password=secret token=abcdef /Users/a1/workspace/nn'],
+        failure_lines: ['password=secret token=abcdef /Users/a1/workspace/app'],
         auto_fix: nil,
         error: nil
       )
@@ -3989,7 +3989,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     record = JSON.parse(File.read(db_path).lines.first)
     assert_equal 'App Store Framework 元数据', record['type']
     assert_equal 'publish_failed', record['event']
-    refute_includes record['reason'], '10.1.2.175'
+    refute_includes record['reason'], 'jenkins.example.com'
     refute_includes record['failure_lines'].join("\n"), 'secret'
     refute_includes record['failure_lines'].join("\n"), '/Users/a1'
     assert_match(/\A[0-9a-f]{16}\z/, record['fingerprint'])
@@ -4028,7 +4028,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     system('git', '-C', project_dir, 'checkout', '-b', 'develop', out: File::NULL, err: File::NULL)
 
     Dir.chdir(project_dir) do
-      publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build'])
+      publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'media-ios-build'])
       assert_equal 'develop', publisher.main_app_branch
     end
   ensure
@@ -4036,27 +4036,27 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   end
 
   def test_publish_only_parses_wechat_notify_options
-    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--notify-wechat', 'false'])
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'media-ios-build', '--notify-wechat', 'false'])
     assert_equal 'false', publisher.instance_variable_get(:@notify_wechat)
 
-    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--notify-wechat=true'])
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'media-ios-build', '--notify-wechat=true'])
     assert_equal 'true', publisher.instance_variable_get(:@notify_wechat)
 
-    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--no-wechat-notify'])
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'media-ios-build', '--no-wechat-notify'])
     assert_equal 'false', publisher.instance_variable_get(:@notify_wechat)
   end
 
   def test_publish_only_parses_force_private_pod_update_options
-    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--force-private-pod-update'])
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'media-ios-build', '--force-private-pod-update'])
     assert_equal 'true', publisher.instance_variable_get(:@force_private_pod_update)
 
-    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--force-private-pod-update', 'false'])
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'media-ios-build', '--force-private-pod-update', 'false'])
     assert_equal 'false', publisher.instance_variable_get(:@force_private_pod_update)
 
-    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--force-private-pod-update=true'])
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'media-ios-build', '--force-private-pod-update=true'])
     assert_equal 'true', publisher.instance_variable_get(:@force_private_pod_update)
 
-    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'nnrtc-ios-build', '--no-force-private-pod-update'])
+    publisher = CocoapodsPodx::PublishOnly.new(['publish', '--job', 'media-ios-build', '--no-force-private-pod-update'])
     assert_equal 'false', publisher.instance_variable_get(:@force_private_pod_update)
   end
 
@@ -4077,12 +4077,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_mgit_standalone_status_runs_without_cocoapods_command
     original_puts = nil
     project_dir = Dir.mktmpdir('cocoapods-podx-mgit-standalone')
-    FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'nnlibrary'))
+    FileUtils.mkdir_p(File.join(project_dir, 'Development Pods', 'applibrary'))
     system('git', '-C', project_dir, 'init', '-q')
     system('git', '-C', project_dir, 'checkout', '-b', 'main', out: File::NULL, err: File::NULL)
-    system('git', '-C', File.join(project_dir, 'Development Pods', 'nnlibrary'), 'init', '-q')
-    system('git', '-C', File.join(project_dir, 'Development Pods', 'nnlibrary'), 'checkout', '-b', 'main', out: File::NULL, err: File::NULL)
-    File.write(File.join(project_dir, 'Podfile.overlay'), "pod 'NNLibrary'\n")
+    system('git', '-C', File.join(project_dir, 'Development Pods', 'applibrary'), 'init', '-q')
+    system('git', '-C', File.join(project_dir, 'Development Pods', 'applibrary'), 'checkout', '-b', 'main', out: File::NULL, err: File::NULL)
+    File.write(File.join(project_dir, 'Podfile.overlay'), "pod 'AppLibrary'\n")
 
     Dir.chdir(project_dir) do
       original_puts = Pod::UI.method(:puts)
@@ -4093,8 +4093,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
       assert_includes output, '【status 结果】'
       assert_includes output, '| main'
-      assert_includes output, '| NNLibrary'
-      assert_includes output, '| NNLibrary | main | -'
+      assert_includes output, '| AppLibrary'
+      assert_includes output, '| AppLibrary | main | -'
       refute_includes output, '| 更新'
       assert_includes output, '【status 汇总】处理 1 个，跳过 1 个'
       Pod::UI.define_singleton_method(:puts, original_puts)
@@ -4146,20 +4146,20 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
           work_dir: '.mgit-publish',
           base_branch: 'feature/5.14.8_felix_test',
           repos: nil,
-          main_repo: 'nnios',
+          main_repo: 'iosapp',
           update_podfile_branch: true,
         }
       end
 
       def mgit_publish_repos
-        [{ name: 'nnios', url: 'http://git.example.com/nn_ios/nnios.git' }]
+        [{ name: 'iosapp', url: 'https://git.example.com/app_ios/iosapp.git' }]
       end
 
       def mgit_publish_version_config
         {
           type: 'ios_xcodeproj',
           branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$',
-          project_file: 'NNIM.xcodeproj/project.pbxproj',
+          project_file: 'AppIM.xcodeproj/project.pbxproj',
           build_number_strategy: 'ios_semver',
         }
       end
@@ -4168,9 +4168,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         @commands << [path, args]
         if args.first == 'clone'
           repo_dir = args.last
-          FileUtils.mkdir_p(File.join(repo_dir, 'NNIM.xcodeproj'))
-          File.write(File.join(repo_dir, 'Podfile'), "pod 'NNLibrary', :branch => 'develop'\n")
-          File.write(File.join(repo_dir, 'NNIM.xcodeproj', 'project.pbxproj'), <<~PROJECT)
+          FileUtils.mkdir_p(File.join(repo_dir, 'AppIM.xcodeproj'))
+          File.write(File.join(repo_dir, 'Podfile'), "pod 'AppLibrary', :branch => 'develop'\n")
+          File.write(File.join(repo_dir, 'AppIM.xcodeproj', 'project.pbxproj'), <<~PROJECT)
             MARKETING_VERSION = 5.14.7;
             CURRENT_PROJECT_VERSION = 501407;
           PROJECT
@@ -4210,8 +4210,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     refute_includes command_args, ['commit', '-m', 'chore: update version to 5.14.8(501408) for feature/5.14.8_felix_test']
     assert_includes command_args, ['commit', '-m', 'chore: update publish config to release/5.14.8']
 
-    repo_dir = File.join(project_dir, '.mgit-publish', 'nnios')
-    project_file = File.read(File.join(repo_dir, 'NNIM.xcodeproj', 'project.pbxproj'))
+    repo_dir = File.join(project_dir, '.mgit-publish', 'iosapp')
+    project_file = File.read(File.join(repo_dir, 'AppIM.xcodeproj', 'project.pbxproj'))
     assert_includes project_file, 'MARKETING_VERSION = 5.14.8;'
     assert_includes project_file, 'CURRENT_PROJECT_VERSION = 501408;'
   ensure
@@ -4245,20 +4245,20 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
           work_dir: '.mgit-publish',
           base_branch: 'develop',
           repos: nil,
-          main_repo: 'nnios',
+          main_repo: 'iosapp',
           update_podfile_branch: true,
         }
       end
 
       def mgit_publish_repos
-        [{ name: 'nnios', url: 'http://git.example.com/nn_ios/nnios.git' }]
+        [{ name: 'iosapp', url: 'https://git.example.com/app_ios/iosapp.git' }]
       end
 
       def mgit_publish_version_config
         {
           type: 'ios_xcodeproj',
           branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$',
-          project_file: 'NNIM.xcodeproj/project.pbxproj',
+          project_file: 'AppIM.xcodeproj/project.pbxproj',
           build_number_strategy: 'ios_semver',
         }
       end
@@ -4267,9 +4267,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         @commands << [path, args]
         if args.first == 'clone'
           repo_dir = args.last
-          FileUtils.mkdir_p(File.join(repo_dir, 'NNIM.xcodeproj'))
-          File.write(File.join(repo_dir, 'Podfile'), "pod 'NNLibrary', :branch => 'develop'\n")
-          File.write(File.join(repo_dir, 'NNIM.xcodeproj', 'project.pbxproj'), <<~PROJECT)
+          FileUtils.mkdir_p(File.join(repo_dir, 'AppIM.xcodeproj'))
+          File.write(File.join(repo_dir, 'Podfile'), "pod 'AppLibrary', :branch => 'develop'\n")
+          File.write(File.join(repo_dir, 'AppIM.xcodeproj', 'project.pbxproj'), <<~PROJECT)
             MARKETING_VERSION = 5.14.7;
             CURRENT_PROJECT_VERSION = 501407;
           PROJECT
@@ -4348,8 +4348,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end.new
 
     work_dir = Dir.mktmpdir('cocoapods-podx-mgit-publish-work')
-    FileUtils.mkdir_p(File.join(work_dir, 'nnios', '.git'))
-    FileUtils.mkdir_p(File.join(work_dir, 'nnbusscom'))
+    FileUtils.mkdir_p(File.join(work_dir, 'iosapp', '.git'))
+    FileUtils.mkdir_p(File.join(work_dir, 'appfeaturekit'))
     File.write(File.join(work_dir, 'log.txt'), 'debug')
 
     publisher.mgit_publish_cleanup_work_dir(work_dir)
@@ -4382,13 +4382,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end.new
 
     publisher.mgit_publish_push_remote_repo_branch(
-      'http://git.example.com/nn_ios/nnbusscom.git',
+      'https://git.example.com/app_ios/appfeaturekit.git',
       'develop',
       'release/5.14.2',
       'normal'
     )
 
-    assert_equal [['http://git.example.com/nn_ios/nnbusscom.git', 'develop', 'release/5.14.2']], publisher.api_args
+    assert_equal [['https://git.example.com/app_ios/appfeaturekit.git', 'develop', 'release/5.14.2']], publisher.api_args
     assert_empty publisher.commands
   end
 
@@ -4419,17 +4419,17 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end.new
 
     publisher.mgit_publish_push_remote_repo_branch(
-      'http://git.example.com/nn_ios/nnbusscom.git',
+      'https://git.example.com/app_ios/appfeaturekit.git',
       'develop',
       'release/5.14.2',
       'normal'
     )
 
     command_args = publisher.commands.map(&:last)
-    assert_equal ['ls-remote', 'http://git.example.com/nn_ios/nnbusscom.git', 'refs/heads/develop'], command_args[0]
+    assert_equal ['ls-remote', 'https://git.example.com/app_ios/appfeaturekit.git', 'refs/heads/develop'], command_args[0]
     assert_includes command_args, ['init', '-q']
-    assert_includes command_args, ['fetch', '--depth', '1', 'http://git.example.com/nn_ios/nnbusscom.git', 'refs/heads/develop']
-    assert_includes command_args, ['push', 'http://git.example.com/nn_ios/nnbusscom.git', 'FETCH_HEAD:refs/heads/release/5.14.2']
+    assert_includes command_args, ['fetch', '--depth', '1', 'https://git.example.com/app_ios/appfeaturekit.git', 'refs/heads/develop']
+    assert_includes command_args, ['push', 'https://git.example.com/app_ios/appfeaturekit.git', 'FETCH_HEAD:refs/heads/release/5.14.2']
     refute publisher.commands.any? { |_path, args| args.include?('clone') }
   end
 
@@ -4448,7 +4448,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       refute publisher.mgit_publish_create_remote_branch_via_api(
-        'http://git.example.com/nn_ios/nnbusscom.git',
+        'https://git.example.com/app_ios/appfeaturekit.git',
         'develop',
         'release/5.14.2'
       )
@@ -4483,14 +4483,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end.new
 
     publisher.mgit_publish_push_remote_repo_branch(
-      'http://git.example.com/nn_ios/nnbusscom.git',
+      'https://git.example.com/app_ios/appfeaturekit.git',
       'develop',
       'release/5.14.2',
       'skip'
     )
 
     assert_equal 1, publisher.commands.length
-    assert_equal ['ls-remote', 'http://git.example.com/nn_ios/nnbusscom.git', 'refs/heads/develop'], publisher.commands.first[1]
+    assert_equal ['ls-remote', 'https://git.example.com/app_ios/appfeaturekit.git', 'refs/heads/develop'], publisher.commands.first[1]
   end
 
   def test_mgit_publish_output_hides_config_and_local_checkout_tables
@@ -4532,9 +4532,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       include CocoapodsPodx::Commands::MgitPublish
     end.new
 
-    uri = publisher.mgit_publish_gitlab_create_branch_uri('http://git.leigod.top/nn_ios/nnbusscom.git')
+    uri = publisher.mgit_publish_gitlab_create_branch_uri('https://git.example.com/app_ios/appfeaturekit.git')
 
-    assert_equal 'http://git.leigod.top/api/v4/projects/nn_ios%2Fnnbusscom/repository/branches', uri.to_s
+    assert_equal 'https://git.example.com/api/v4/projects/app_ios%2Fappfeaturekit/repository/branches', uri.to_s
   end
 
   def test_mgit_publish_project_specific_actions_are_opt_in
@@ -4543,7 +4543,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     generic_dir = Dir.mktmpdir('cocoapods-podx-generic-publish')
     File.write(File.join(generic_dir, 'podx.config.yml'), <<~YAML)
       target_name: generic
-      git_base_url: http://git.example.com
+      git_base_url: https://git.example.com
       publish_repos:
         - app
     YAML
@@ -4572,16 +4572,16 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end.new
     repo_dir = Dir.mktmpdir('cocoapods-podx-publish')
     File.write(File.join(repo_dir, 'Podfile'), <<~RUBY)
-      pod 'NNApperance', :branch => 'develop'
-      pod 'NNLibrary', branch: 'develop'
+      pod 'AppAppearance', :branch => 'develop'
+      pod 'AppLibrary', branch: 'develop'
       pod 'Alamofire', '5.11.2'
     RUBY
 
     assert publisher.mgit_publish_update_podfile_branch(repo_dir, 'release/5.14.2')
 
     content = File.read(File.join(repo_dir, 'Podfile'))
-    assert_includes content, "pod 'NNApperance', :branch => 'release/5.14.2'"
-    assert_includes content, "pod 'NNLibrary', branch: 'release/5.14.2'"
+    assert_includes content, "pod 'AppAppearance', :branch => 'release/5.14.2'"
+    assert_includes content, "pod 'AppLibrary', branch: 'release/5.14.2'"
     assert_includes content, "pod 'Alamofire', '5.11.2'"
   ensure
     FileUtils.rm_rf(repo_dir) if repo_dir
@@ -4599,7 +4599,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def load_entries
-        [{ name: 'NNBasciCommon' }, { name: 'NNBussCom' }, { name: 'NNBussCom' }]
+        [{ name: 'AppBaseKit' }, { name: 'AppFeatureKit' }, { name: 'AppFeatureKit' }]
       end
 
       def update_local_repo(name, dry_run:, pull:, expected_branch:)
@@ -4610,15 +4610,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_equal(
       [
-        ['NNBussCom', '-', 'release/5.14.2', 'ok'],
-        ['NNBasciCommon', '-', 'release/5.14.2', 'ok'],
+        ['AppFeatureKit', '-', 'release/5.14.2', 'ok'],
+        ['AppBaseKit', '-', 'release/5.14.2', 'ok'],
       ],
       publisher.mgit_publish_sync_overlay_repos('release/5.14.2')
     )
     assert_equal(
       [
-        ['NNBussCom', false, true, 'release/5.14.2'],
-        ['NNBasciCommon', false, true, 'release/5.14.2'],
+        ['AppFeatureKit', false, true, 'release/5.14.2'],
+        ['AppBaseKit', false, true, 'release/5.14.2'],
       ],
       publisher.updates
     )
@@ -4629,19 +4629,19 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_project_config = CocoapodsPodx::Runtime.instance_variable_get(:@project_config)
     project_dir = Dir.mktmpdir('cocoapods-podx-mgit-publish-sync')
     File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
-      target_name: nn_ios
-      git_base_url: http://git.example.com
-      publish_main_repo: nnios
+      target_name: app_ios
+      git_base_url: https://git.example.com
+      publish_main_repo: iosapp
       publish_repos:
-        - nnios
-        - nnbusscom
-        - nnyytext
-        - nngeneral
+        - iosapp
+        - appfeaturekit
+        - apptextkit
+        - appgeneral
     YAML
     File.write(File.join(project_dir, 'Podfile'), <<~RUBY)
-      pod 'NNLibrary', :branch => 'develop', :remote_name => 'NNYYText', :local_name => 'NNLibrary'
-      pod 'NNLogin', :branch => 'develop', :group_name => 'NNBussCom'
-      pod 'NNGeneral', :branch => 'develop'
+      pod 'AppLibrary', :branch => 'develop', :remote_name => 'AppTextKit', :local_name => 'AppLibrary'
+      pod 'AppLogin', :branch => 'develop', :group_name => 'AppFeatureKit'
+      pod 'AppGeneral', :branch => 'develop'
     RUBY
     CocoapodsPodx::Runtime.configure(project_directory: project_dir)
 
@@ -4656,7 +4656,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def load_entries
-        [{ name: 'NNLibrary' }, { name: 'NNBasciCommon' }]
+        [{ name: 'AppLibrary' }, { name: 'AppBaseKit' }]
       end
 
       def update_local_repo(name, dry_run:, pull:, expected_branch:)
@@ -4669,19 +4669,19 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
     assert_equal(
       [
-        ['NNBussCom', '-', 'release/5.14.2', 'ok'],
-        ['NNLibrary', '-', 'release/5.14.2', 'ok'],
-        ['NNGeneral', '-', 'release/5.14.2', 'ok'],
-        ['NNBasciCommon', '-', 'release/5.14.2', 'ok'],
+        ['AppFeatureKit', '-', 'release/5.14.2', 'ok'],
+        ['AppLibrary', '-', 'release/5.14.2', 'ok'],
+        ['AppGeneral', '-', 'release/5.14.2', 'ok'],
+        ['AppBaseKit', '-', 'release/5.14.2', 'ok'],
       ],
       rows
     )
     assert_equal(
       [
-        ['NNBussCom', false, true, 'release/5.14.2'],
-        ['NNLibrary', false, true, 'release/5.14.2'],
-        ['NNGeneral', false, true, 'release/5.14.2'],
-        ['NNBasciCommon', false, true, 'release/5.14.2'],
+        ['AppFeatureKit', false, true, 'release/5.14.2'],
+        ['AppLibrary', false, true, 'release/5.14.2'],
+        ['AppGeneral', false, true, 'release/5.14.2'],
+        ['AppBaseKit', false, true, 'release/5.14.2'],
       ],
       publisher.updates
     )
@@ -4760,13 +4760,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     lines = [
       '# 示例：',
       '',
-      "pod 'NNBasciCommon'",
+      "pod 'AppBaseKit'",
       '',
-      "pod 'NNLibrary'"
+      "pod 'AppLibrary'"
     ]
 
     assert_equal(
-      ['# 示例：', '', "pod 'NNBasciCommon'", "pod 'NNLibrary'"],
+      ['# 示例：', '', "pod 'AppBaseKit'", "pod 'AppLibrary'"],
       helper.normalize_overlay_spacing(lines)
     )
   end
@@ -4779,7 +4779,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     project_dir = Dir.mktmpdir('cocoapods-podx-xcodeproj')
-    xcodeproj_path = File.join(project_dir, 'NNIM.xcodeproj')
+    xcodeproj_path = File.join(project_dir, 'AppIM.xcodeproj')
     Xcodeproj::Project.new(xcodeproj_path).save
 
     helper = Class.new do
@@ -4790,7 +4790,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     helper.project_directory = project_dir
     helper.overlay_path = File.join(project_dir, 'Podfile.overlay')
     helper.instance_variable_set(:@disable, false)
-    helper.instance_variable_set(:@pod_names, ['NNBasciCommon'])
+    helper.instance_variable_set(:@pod_names, ['AppBaseKit'])
 
     helper.write_entries([])
 
@@ -4811,7 +4811,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert File.exist?(overlay_path)
     content = File.read(overlay_path)
     assert_includes content, '# 本地源码覆盖配置'
-    assert_includes content, "# pod 'NNBussCom'"
+    assert_includes content, "# pod 'AppFeatureKit'"
   end
 
   def test_git_actions_log_limit_falls_back_to_default
@@ -4832,10 +4832,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end.new
 
     helper.instance_variable_set(:@add_mode, true)
-    helper.instance_variable_set(:@pod_names, ['.', '-A', '--all', 'NNBussCom'])
+    helper.instance_variable_set(:@pod_names, ['.', '-A', '--all', 'AppFeatureKit'])
     helper.normalize_git_add_arguments!
 
-    assert_equal ['NNBussCom'], helper.instance_variable_get(:@pod_names)
+    assert_equal ['AppFeatureKit'], helper.instance_variable_get(:@pod_names)
   end
 
   def test_git_actions_pull_table_uses_compact_aligned_columns
@@ -4851,7 +4851,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         %w[仓库 来源 分支 更新 Commit],
         [
           ['main', '本地', 'feature/5.14.2_broadcast', '有更新', 'bd5ad0 update: 发布cocoapods-podx 0.0.35'],
-          ['NNLibrary', '远端', 'feature/5.14.2_broadcast', '-', '258c70']
+          ['AppLibrary', '远端', 'feature/5.14.2_broadcast', '-', '258c70']
         ]
       )
     end
@@ -4891,7 +4891,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_git_actions_pull_switches_clean_components_to_main_branch_before_pull
     project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
     main_path = File.join(project_dir, 'main')
-    component_path = File.join(project_dir, 'Development Pods', 'NNApperance')
+    component_path = File.join(project_dir, 'Development Pods', 'AppAppearance')
     FileUtils.mkdir_p(main_path)
     FileUtils.mkdir_p(component_path)
 
@@ -4921,7 +4921,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def commit_targets(_entries)
         [
           { name: 'main', path: @project_directory },
-          { name: 'NNApperance', path: @component_path }
+          { name: 'AppAppearance', path: @component_path }
         ]
       end
 
@@ -4967,7 +4967,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       helper.git_action_repos([])
     end
 
-    assert_match(/\| NNApperance\s+\| 本地\s+\| feature\/5\.14\.2_broadcast \| 有更新/, output)
+    assert_match(/\| AppAppearance\s+\| 本地\s+\| feature\/5\.14\.2_broadcast \| 有更新/, output)
     assert_includes output, 'bbbbbb update'
     assert_includes helper.commands, [component_path, ['fetch', 'origin']]
     assert_includes helper.commands, [component_path, ['checkout_branch!', 'feature/5.14.2_broadcast']]
@@ -5104,7 +5104,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_git_actions_pull_skips_dirty_repo_when_branch_needs_checkout
     project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
     main_path = File.join(project_dir, 'main')
-    component_path = File.join(project_dir, 'Development Pods', 'NNApperance')
+    component_path = File.join(project_dir, 'Development Pods', 'AppAppearance')
     FileUtils.mkdir_p(main_path)
     FileUtils.mkdir_p(component_path)
 
@@ -5129,7 +5129,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def commit_targets(_entries)
         [
           { name: 'main', path: @project_directory },
-          { name: 'NNApperance', path: @component_path }
+          { name: 'AppAppearance', path: @component_path }
         ]
       end
 
@@ -5235,7 +5235,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_git_actions_rebase_continue_only_runs_for_rebasing_repos
     project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
-    component_path = File.join(project_dir, 'Development Pods', 'NNLibrary')
+    component_path = File.join(project_dir, 'Development Pods', 'AppLibrary')
     FileUtils.mkdir_p(project_dir)
     FileUtils.mkdir_p(component_path)
 
@@ -5261,7 +5261,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def commit_targets(_entries)
         [
           { name: 'main', path: @project_directory },
-          { name: 'NNLibrary', path: @component_path }
+          { name: 'AppLibrary', path: @component_path }
         ]
       end
 
@@ -5296,7 +5296,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes helper.commands, [component_path, ['rebase', '--continue']]
     refute_includes helper.commands, [project_dir, ['rebase', '--continue']]
     assert_match(/\| main\s+\| develop \| 跳过\s+\|/, output)
-    assert_match(/\| NNLibrary \| develop \| 已继续 \|/, output)
+    assert_match(/\| AppLibrary \| develop \| 已继续 \|/, output)
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir
@@ -5366,7 +5366,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_git_actions_pull_lists_remote_components_not_in_overlay
     project_dir = Dir.mktmpdir('cocoapods-podx-git-actions')
     main_path = File.join(project_dir, 'main')
-    buss_path = File.join(project_dir, 'Development Pods', 'nnbusscom')
+    buss_path = File.join(project_dir, 'Development Pods', 'appfeaturekit')
     FileUtils.mkdir_p(main_path)
     FileUtils.mkdir_p(buss_path)
 
@@ -5393,11 +5393,11 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def supported_overlay_names
-        %w[NNBussCom NNLibrary]
+        %w[AppFeatureKit AppLibrary]
       end
 
       def local_repo_path_for(name)
-        name == 'NNBussCom' ? @buss_path : File.join(@project_directory, 'Development Pods', name)
+        name == 'AppFeatureKit' ? @buss_path : File.join(@project_directory, 'Development Pods', name)
       end
 
       def declared_branch_for(_name)
@@ -5433,13 +5433,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      helper.git_action_repos([{ name: 'NNBussCom' }])
+      helper.git_action_repos([{ name: 'AppFeatureKit' }])
     end
 
-    assert_match(/\| NNBussCom\s+\| 本地 \| develop \| -\s+\| f0fdc2 \|/, output)
-    assert_match(/\| NNLibrary\s+\| 远端 \| develop \| -\s+\|\s+\|/, output)
+    assert_match(/\| AppFeatureKit\s+\| 本地 \| develop \| -\s+\| f0fdc2 \|/, output)
+    assert_match(/\| AppLibrary\s+\| 远端 \| develop \| -\s+\|\s+\|/, output)
     assert_includes helper.commands, [buss_path, ['pull', '--rebase', '--autostash', 'origin', 'develop']]
-    refute helper.commands.any? { |path, _args| path.to_s.include?('NNLibrary') }
+    refute helper.commands.any? { |path, _args| path.to_s.include?('AppLibrary') }
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir
@@ -5448,7 +5448,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_git_actions_merge_named_component_from_origin_branch
     project_dir = Dir.mktmpdir('cocoapods-podx-git-merge')
     main_path = File.join(project_dir, 'main')
-    component_path = File.join(project_dir, 'Development Pods', 'NNBussCom')
+    component_path = File.join(project_dir, 'Development Pods', 'AppFeatureKit')
     FileUtils.mkdir_p(main_path)
     FileUtils.mkdir_p(component_path)
 
@@ -5462,7 +5462,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         @component_path = component_path
         @merge_mode = true
         @merge_branch = 'develop'
-        @pod_names = ['NNBussCom']
+        @pod_names = ['AppFeatureKit']
         @dry_run = false
         @commands = []
         @branches = {
@@ -5479,7 +5479,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def commit_targets(_entries)
-        [{ name: 'NNBussCom', path: @component_path }]
+        [{ name: 'AppFeatureKit', path: @component_path }]
       end
 
       def git_work_tree?(_path)
@@ -5520,7 +5520,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_includes output, '【merge 结果】'
-    assert_includes output, '| NNBussCom | feature/5.14.2_broadcast | 已合并 |'
+    assert_includes output, '| AppFeatureKit | feature/5.14.2_broadcast | 已合并 |'
     assert_includes helper.commands, [component_path, ['fetch', 'origin', 'develop']]
     assert_includes helper.commands, [component_path, ['merge', '--no-edit', '--no-stat', 'origin/develop']]
   ensure
@@ -5621,10 +5621,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     project_dir = Dir.mktmpdir('cocoapods-podx-git-merge-extra')
     paths = {
       'main' => File.join(project_dir, 'main'),
-      'NNBussCom' => File.join(project_dir, 'Development Pods', 'NNBussCom'),
-      'NNIMManager' => File.join(project_dir, 'Development Pods', 'NNIMManager'),
-      'NNBasciCommon' => File.join(project_dir, 'Development Pods', 'NNBasciCommon'),
-      'NNRealReachability' => File.join(project_dir, 'Development Pods', 'NNRealReachability')
+      'AppFeatureKit' => File.join(project_dir, 'Development Pods', 'AppFeatureKit'),
+      'AppIMManager' => File.join(project_dir, 'Development Pods', 'AppIMManager'),
+      'AppBaseKit' => File.join(project_dir, 'Development Pods', 'AppBaseKit'),
+      'AppReachability' => File.join(project_dir, 'Development Pods', 'AppReachability')
     }
     paths.values.each { |path| FileUtils.mkdir_p(path) }
 
@@ -5654,11 +5654,11 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def supported_overlay_names
-        %w[NNBussCom NNBasciCommon NNRealReachability NNIMManager]
+        %w[AppFeatureKit AppBaseKit AppReachability AppIMManager]
       end
 
       def merge_branch_component_changed?(name)
-        %w[NNBasciCommon NNRealReachability].include?(name)
+        %w[AppBaseKit AppReachability].include?(name)
       end
 
       def git_work_tree?(_path)
@@ -5700,18 +5700,18 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      helper.git_action_repos([{ name: 'NNBussCom' }, { name: 'NNIMManager' }])
+      helper.git_action_repos([{ name: 'AppFeatureKit' }, { name: 'AppIMManager' }])
     end
 
-    assert_includes output, '| NNBussCom          | feature/5.14.2_websocket | 已合并 |'
-    assert_includes output, '| NNIMManager        | feature/5.14.2_websocket | 已合并 |'
-    assert_includes output, '| NNBasciCommon      | feature/5.14.2_websocket | 已合并 |'
-    assert_includes output, '| NNRealReachability | feature/5.14.2_websocket | 已合并 |'
-    assert_includes helper.commands, [paths.fetch('NNBasciCommon'), ['checkout_branch!', 'develop']]
-    assert_includes helper.commands, [paths.fetch('NNBasciCommon'), ['pull', '--ff-only', 'origin', 'develop']]
-    assert_includes helper.commands, [paths.fetch('NNBasciCommon'), ['checkout_branch!', 'feature/5.14.2_websocket']]
-    assert_includes helper.commands, [paths.fetch('NNBasciCommon'), ['merge', '--no-edit', '--no-stat', 'origin/develop']]
-    assert_includes helper.commands, [paths.fetch('NNRealReachability'), ['merge', '--no-edit', '--no-stat', 'origin/develop']]
+    assert_match(/\| AppFeatureKit\s+\| feature\/5\.14\.2_websocket \| 已合并 \|/, output)
+    assert_match(/\| AppIMManager\s+\| feature\/5\.14\.2_websocket \| 已合并 \|/, output)
+    assert_match(/\| AppBaseKit\s+\| feature\/5\.14\.2_websocket \| 已合并 \|/, output)
+    assert_match(/\| AppReachability\s+\| feature\/5\.14\.2_websocket \| 已合并 \|/, output)
+    assert_includes helper.commands, [paths.fetch('AppBaseKit'), ['checkout_branch!', 'develop']]
+    assert_includes helper.commands, [paths.fetch('AppBaseKit'), ['pull', '--ff-only', 'origin', 'develop']]
+    assert_includes helper.commands, [paths.fetch('AppBaseKit'), ['checkout_branch!', 'feature/5.14.2_websocket']]
+    assert_includes helper.commands, [paths.fetch('AppBaseKit'), ['merge', '--no-edit', '--no-stat', 'origin/develop']]
+    assert_includes helper.commands, [paths.fetch('AppReachability'), ['merge', '--no-edit', '--no-stat', 'origin/develop']]
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts
     FileUtils.rm_rf(project_dir) if project_dir
@@ -5724,14 +5724,14 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       # 本地源码覆盖配置
       # 示例：
 
-      pod 'NNBussCom'
+      pod 'AppFeatureKit'
     RUBY
 
     paths = {
       'main' => project_dir,
-      'NNBussCom' => File.join(project_dir, 'Development Pods', 'NNBussCom'),
-      'NNBasciCommon' => File.join(project_dir, 'Development Pods', 'NNBasciCommon'),
-      'NNRealReachability' => File.join(project_dir, 'Development Pods', 'NNRealReachability')
+      'AppFeatureKit' => File.join(project_dir, 'Development Pods', 'AppFeatureKit'),
+      'AppBaseKit' => File.join(project_dir, 'Development Pods', 'AppBaseKit'),
+      'AppReachability' => File.join(project_dir, 'Development Pods', 'AppReachability')
     }
     paths.values.each { |path| FileUtils.mkdir_p(path) }
 
@@ -5761,7 +5761,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def supported_overlay_names
-        %w[NNBussCom NNBasciCommon NNRealReachability]
+        %w[AppFeatureKit AppBaseKit AppReachability]
       end
 
       def git_work_tree?(_path)
@@ -5777,12 +5777,12 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
     end.new(paths, overlay_path)
 
-    helper.send(:sync_overlay_to_all_merge_components, [{ name: 'NNBussCom' }])
+    helper.send(:sync_overlay_to_all_merge_components, [{ name: 'AppFeatureKit' }])
 
     content = File.read(overlay_path)
-    assert_includes content, "pod 'NNBussCom'"
-    assert_includes content, "pod 'NNBasciCommon'"
-    assert_includes content, "pod 'NNRealReachability'"
+    assert_includes content, "pod 'AppFeatureKit'"
+    assert_includes content, "pod 'AppBaseKit'"
+    assert_includes content, "pod 'AppReachability'"
   ensure
     FileUtils.rm_rf(project_dir) if project_dir
   end
@@ -5790,7 +5790,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_git_hooks_install_pre_commit_protects_configured_files
     project_dir = Dir.mktmpdir('cocoapods-podx-hooks')
     main_path = File.join(project_dir, 'main')
-    component_path = File.join(project_dir, 'Development Pods', 'NNBussCom')
+    component_path = File.join(project_dir, 'Development Pods', 'AppFeatureKit')
     FileUtils.mkdir_p(File.join(main_path, '.git', 'hooks'))
     FileUtils.mkdir_p(File.join(component_path, '.git', 'hooks'))
     File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
@@ -5836,7 +5836,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
     output, = capture_io do
-      helper.install_git_hooks([{ name: 'NNBussCom' }])
+      helper.install_git_hooks([{ name: 'AppFeatureKit' }])
     end
 
     main_hook = File.read(File.join(main_path, '.githooks', 'pre-commit'))
@@ -5866,7 +5866,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes output, '| 合并保护 | 配置'
     assert_includes output, 'publish/commit-edit'
     assert_includes output, '| main'
-    refute_includes output, 'NNBussCom'
+    refute_includes output, 'AppFeatureKit'
     assert_includes helper.commands, [main_path, ['config', 'core.hooksPath', '.githooks']]
     refute File.exist?(File.join(component_path, '.githooks', 'pre-commit'))
     refute File.exist?(File.join(component_path, '.githooks', 'pre-merge-commit'))
@@ -6010,15 +6010,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     config_path = File.join(config_dir, 'podx.config.yml')
     File.write(config_path, <<~YAML)
       publish_base_branch: develop
-      publish_main_repo: nnios
+      publish_main_repo: iosapp
       publish_update_podfile_branch: true
       publish_repos:
-        - nnios
-        - nnbusscom
+        - iosapp
+        - appfeaturekit
       publish_version:
         type: ios_xcodeproj
         branch_pattern: '^release/(\\d+\\.\\d+\\.\\d+)$'
-        project_file: NNIM.xcodeproj/project.pbxproj
+        project_file: AppIM.xcodeproj/project.pbxproj
         build_number_strategy: ios_semver
     YAML
 
@@ -6251,17 +6251,17 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_pipeline_runtime_policy_uses_selected_product_line_config
     project_dir = Dir.mktmpdir('cocoapods-podx-pipeline-product-line')
     File.write(File.join(project_dir, 'podx.config.yml'), <<~YAML)
-      default_product_line: nn
+      default_product_line: app
       product_lines:
-        nn:
+        app:
           publish_pipeline_gate: false
-        nnrtc:
+        media:
           publish_pipeline_gate: true
           publish_pipeline_gate_strategy:
             pgyer: off
             testflight: strict
     YAML
-    helper = pipeline_runtime_helper(project_dir, ['policy'], product_line: 'nnrtc')
+    helper = pipeline_runtime_helper(project_dir, ['policy'], product_line: 'media')
 
     rows = helper.pipeline_policy_rows
 
@@ -6581,10 +6581,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       include CocoapodsPodx::Commands::GitActions
     end.new
 
-    assert_equal 'LoginLogic.swift', helper.git_changed_file_summary([' M NNIM/Src/Main/Auth/Logics/LoginLogic.swift'])
+    assert_equal 'LoginLogic.swift', helper.git_changed_file_summary([' M AppIM/Src/Main/Auth/Logics/LoginLogic.swift'])
     assert_equal 'NewName.swift', helper.git_changed_file_summary(['R  Old/OldName.swift -> New/Path/NewName.swift'])
     assert_equal '未推送 1', helper.git_status_local_change_summary([], 1)
-    assert_equal 'LoginLogic.swift; 未推送 2', helper.git_status_local_change_summary([' M NNIM/Src/Main/Auth/Logics/LoginLogic.swift'], 2)
+    assert_equal 'LoginLogic.swift; 未推送 2', helper.git_status_local_change_summary([' M AppIM/Src/Main/Auth/Logics/LoginLogic.swift'], 2)
 
     original_puts = Pod::UI.method(:puts)
     Pod::UI.define_singleton_method(:puts) { |message = ''| $stdout.puts(message) }
@@ -6594,9 +6594,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         %w[仓库 分支 Commit 本地变更],
         [
           helper.git_status_table_row(['main', 'feature/5.14.2_broadcast', 'changed', 'LoginLogic.swift', '/tmp/main', 'bd5ad0', '有更新']),
-          helper.git_status_table_row(['NNBussCom', 'feature/5.14.2_broadcast', 'changed', 'NNVoiceRoomViewController.swift', '/tmp/nnbusscom', '258c70', '-']),
-          helper.git_status_table_row(['NNApperance', 'feature/5.14.2_broadcast', 'clean', '-', '/tmp/nnapperance', '96bc4c', '-']),
-          helper.git_status_table_row(['NNBasciCommon', 'feature/5.14.2_broadcast', 'changed', '未推送 1', '/tmp/nnbascicommon', '982553', '-'])
+          helper.git_status_table_row(['AppFeatureKit', 'feature/5.14.2_broadcast', 'changed', 'AppVoiceRoomViewController.swift', '/tmp/appfeaturekit', '258c70', '-']),
+          helper.git_status_table_row(['AppAppearance', 'feature/5.14.2_broadcast', 'clean', '-', '/tmp/appappearance', '96bc4c', '-']),
+          helper.git_status_table_row(['AppBaseKit', 'feature/5.14.2_broadcast', 'changed', '未推送 1', '/tmp/appbasekit', '982553', '-'])
         ]
       )
     end
@@ -6604,8 +6604,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes output, '| Commit'
     assert_includes output, '| 本地变更'
     assert_includes output, 'LoginLogic.swift'
-    refute_includes output, 'NNIM/Src/Main/Auth'
-    assert_includes output, 'NNVoiceRoomViewController.swift'
+    refute_includes output, 'AppIM/Src/Main/Auth'
+    assert_includes output, 'AppVoiceRoomViewController.swift'
     assert_includes output, 'bd5ad0'
     refute_includes output, '| 更新'
     refute_includes output, '有更新'
@@ -6659,15 +6659,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         %w[仓库 分支 状态],
         [
           helper.git_simple_action_table_row(['main', 'feature/5.14.2_broadcast', 'added', 'M LoginLogic.swift', '/tmp/main']),
-          helper.git_simple_action_table_row(['NNBussCom', 'feature/5.14.2_broadcast', 'skip', 'clean', '/tmp/nnbusscom']),
-          helper.git_simple_action_table_row(['NNLibrary', 'feature/5.14.2_broadcast', 'pushed', 'origin/feature/5.14.2_broadcast', '/tmp/NNLibrary'])
+          helper.git_simple_action_table_row(['AppFeatureKit', 'feature/5.14.2_broadcast', 'skip', 'clean', '/tmp/appfeaturekit']),
+          helper.git_simple_action_table_row(['AppLibrary', 'feature/5.14.2_broadcast', 'pushed', 'origin/feature/5.14.2_broadcast', '/tmp/AppLibrary'])
         ]
       )
     end
 
     assert_includes output, '| 仓库'
     assert_includes output, '已暂存'
-    assert_match(/\| NNBussCom\s+\| feature\/5\.14\.2_broadcast \| -\s+\|/, output)
+    assert_match(/\| AppFeatureKit\s+\| feature\/5\.14\.2_broadcast \| -\s+\|/, output)
     assert_includes output, '已推送'
     refute_includes output, '详情'
     refute_includes output, '路径'
@@ -6683,7 +6683,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_git_actions_push_marks_only_ahead_repos_as_pushed
     project_dir = Dir.mktmpdir('cocoapods-podx-git-push')
     main_path = File.join(project_dir, 'main')
-    component_path = File.join(project_dir, 'Development Pods', 'NNBasciCommon')
+    component_path = File.join(project_dir, 'Development Pods', 'AppBaseKit')
     FileUtils.mkdir_p(main_path)
     FileUtils.mkdir_p(component_path)
 
@@ -6720,7 +6720,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       def commit_targets(_entries)
         [
           { name: 'main', path: @project_directory },
-          { name: 'NNBasciCommon', path: @component_path }
+          { name: 'AppBaseKit', path: @component_path }
         ]
       end
 
@@ -6761,7 +6761,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_match(/\| main\s+\| feature\/5\.14\.2_broadcast \| -\s+\|/, output)
-    assert_match(/\| NNBasciCommon \| feature\/5\.14\.2_broadcast \| 已推送 \|/, output)
+    assert_match(/\| AppBaseKit \| feature\/5\.14\.2_broadcast \| 已推送 \|/, output)
     assert_includes helper.commands, [component_path, ['push', 'origin', 'feature/5.14.2_broadcast']]
     refute_includes helper.commands, [main_path, ['push', 'origin', 'feature/5.14.2_broadcast']]
   ensure
@@ -6903,7 +6903,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         %w[仓库 分支 变更],
         [
           helper.git_stash_table_row(['main', 'feature/5.14.2_broadcast', 'stashed', 'LoginLogic.swift', '/tmp/main']),
-          helper.git_stash_table_row(['NNBussCom', 'feature/5.14.2_broadcast', 'skip', 'clean', '/tmp/nnbusscom'])
+          helper.git_stash_table_row(['AppFeatureKit', 'feature/5.14.2_broadcast', 'skip', 'clean', '/tmp/appfeaturekit'])
         ]
       )
     end
@@ -6928,7 +6928,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       assert_includes error.message, 'mgit stash apply 必须指定一个仓库'
 
       error = assert_raises(Pod::Informative) do
-        CocoapodsPodx::MgitStandalone.new(['stash', 'apply', 'NNLibrary', 'NNBussCom'])
+        CocoapodsPodx::MgitStandalone.new(['stash', 'apply', 'AppLibrary', 'AppFeatureKit'])
       end
       assert_includes error.message, 'mgit stash apply 必须指定一个仓库'
     end
@@ -6937,7 +6937,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   def test_mgit_stash_pop_is_not_supported
     Dir.chdir(@project_dir) do
       error = assert_raises(Pod::Informative) do
-        CocoapodsPodx::MgitStandalone.new(['stash', 'pop', 'NNLibrary'])
+        CocoapodsPodx::MgitStandalone.new(['stash', 'pop', 'AppLibrary'])
       end
       assert_includes error.message, 'mgit 不支持 stash pop'
     end
@@ -6954,10 +6954,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_mgit_stash_apply_single_repo_parses_safely
     Dir.chdir(@project_dir) do
-      command = CocoapodsPodx::MgitStandalone.new(['stash', 'apply', 'NNLibrary'])
+      command = CocoapodsPodx::MgitStandalone.new(['stash', 'apply', 'AppLibrary'])
       assert command.instance_variable_get(:@stash_mode)
       assert command.instance_variable_get(:@stash_apply_mode)
-      assert_equal ['NNLibrary'], command.instance_variable_get(:@pod_names)
+      assert_equal ['AppLibrary'], command.instance_variable_get(:@pod_names)
     end
   end
 
@@ -6972,13 +6972,13 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
           @path = path
           @stash_mode = true
           @stash_apply_mode = true
-          @pod_names = ['NNLibrary']
+          @pod_names = ['AppLibrary']
           @dry_run = false
           @commands = []
         end
 
         def commit_targets(_entries)
-          [{ name: 'NNLibrary', path: @path }]
+          [{ name: 'AppLibrary', path: @path }]
         end
 
         def git_work_tree?(_path); true; end
@@ -7058,7 +7058,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
         %w[仓库 分支 状态],
         [
           helper.git_simple_action_table_row(['main', 'release/5.14.2', 'checkout', '-> release/5.14.2', '/tmp/main']),
-          helper.git_simple_action_table_row(['NNBussCom', 'feature/5.14.2_broadcast', 'skip', 'dirty', '/tmp/nnbusscom'])
+          helper.git_simple_action_table_row(['AppFeatureKit', 'feature/5.14.2_broadcast', 'skip', 'dirty', '/tmp/appfeaturekit'])
         ]
       )
     end
@@ -7215,7 +7215,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_jenkins_publish_rejects_podfile_component_branch_mismatch
     project_dir = Dir.mktmpdir('cocoapods-podx-publish-branch-mismatch')
-    File.write(File.join(project_dir, 'Podfile'), "pod 'NNIMManager', :branch => 'feature/5.14.2_broadcast'\n")
+    File.write(File.join(project_dir, 'Podfile'), "pod 'AppIMManager', :branch => 'feature/5.14.2_broadcast'\n")
     helper = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
 
@@ -7226,11 +7226,11 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def publish_private_repo_names
-        %w[NNIMManager NNBussCom]
+        %w[AppIMManager AppFeatureKit]
       end
 
       def declared_branch_for(name)
-        { 'NNIMManager' => 'feature/5.14.2_broadcast', 'NNBussCom' => 'develop' }[name]
+        { 'AppIMManager' => 'feature/5.14.2_broadcast', 'AppFeatureKit' => 'develop' }[name]
       end
     end.new
     helper.project_dir = project_dir
@@ -7240,15 +7240,15 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_includes error.message, 'Podfile 中私有组件分支必须与本次打包分支同名'
-    assert_includes error.message, 'NNIMManager: Podfile=feature/5.14.2_broadcast, 打包分支=develop'
-    refute_includes error.message, 'NNBussCom'
+    assert_includes error.message, 'AppIMManager: Podfile=feature/5.14.2_broadcast, 打包分支=develop'
+    refute_includes error.message, 'AppFeatureKit'
   ensure
     FileUtils.rm_rf(project_dir) if project_dir
   end
 
   def test_jenkins_publish_accepts_podfile_component_branch_with_origin_prefix
     project_dir = Dir.mktmpdir('cocoapods-podx-publish-branch-match')
-    File.write(File.join(project_dir, 'Podfile'), "pod 'NNIMManager', :branch => 'develop'\n")
+    File.write(File.join(project_dir, 'Podfile'), "pod 'AppIMManager', :branch => 'develop'\n")
     helper = Class.new do
       include CocoapodsPodx::Commands::JenkinsPublish
 
@@ -7259,7 +7259,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
 
       def publish_private_repo_names
-        %w[NNIMManager]
+        %w[AppIMManager]
       end
 
       def declared_branch_for(_name)
@@ -7281,8 +7281,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     helper.validate_publish_remote_release_branches!(
       'origin/release/5.14.2',
       [
-        { repo: 'nnios', branch: 'release/5.14.2', commit: 'abcdef', log: 'ok' },
-        { repo: 'NNBussCom', branch: 'release/5.14.2', commit: '123456', log: 'ok' }
+        { repo: 'iosapp', branch: 'release/5.14.2', commit: 'abcdef', log: 'ok' },
+        { repo: 'AppFeatureKit', branch: 'release/5.14.2', commit: '123456', log: 'ok' }
       ],
       name: 'TestFlight',
       value: 'TestFlight,'
@@ -7292,8 +7292,8 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       helper.validate_publish_remote_release_branches!(
         'origin/release/5.14.2',
         [
-          { repo: 'nnios', branch: 'release/5.14.2', commit: 'abcdef', log: 'ok' },
-          { repo: 'NNBussCom', branch: 'release/5.14.2', commit: '-', log: '远端分支不存在或无法获取：release/5.14.2' }
+          { repo: 'iosapp', branch: 'release/5.14.2', commit: 'abcdef', log: 'ok' },
+          { repo: 'AppFeatureKit', branch: 'release/5.14.2', commit: '-', log: '远端分支不存在或无法获取：release/5.14.2' }
         ],
         name: 'TestFlight',
         value: 'TestFlight,'
@@ -7301,7 +7301,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     assert_includes error.message, '远端主工程和依赖组件仓库都存在'
-    assert_includes error.message, 'NNBussCom release/5.14.2'
+    assert_includes error.message, 'AppFeatureKit release/5.14.2'
   end
 
   def test_jenkins_publish_default_job_url
@@ -7309,11 +7309,11 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       include CocoapodsPodx::Commands::JenkinsPublish
     end.new
 
-    url = helper.default_jenkins_job_url('nnrtc-ios-build')
-    assert_equal 'http://10.1.2.175:8080/job/nnrtc-ios-build/', url
+    url = helper.default_jenkins_job_url('media-ios-build')
+    assert_equal 'https://jenkins.example.com/job/media-ios-build/', url
 
-    configured_url = helper.jenkins_job_url_from_configured_url('http://10.1.2.175:8080/job/nn/')
-    assert_equal 'http://10.1.2.175:8080/job/nn/', configured_url
+    configured_url = helper.jenkins_job_url_from_configured_url('https://jenkins.example.com/job/app/')
+    assert_equal 'https://jenkins.example.com/job/app/', configured_url
   end
 
   def test_jenkins_publish_requires_job_outside_podfile_project
@@ -7333,9 +7333,9 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     helper.project_directory = Dir.mktmpdir('cocoapods-podx-no-podfile')
 
     error = assert_raises(Pod::Informative) { helper.validate_jenkins_publish_context! }
-    assert_includes error.message, '--job nnrtc-ios-build'
+    assert_includes error.message, '--job media-ios-build'
 
-    helper.instance_variable_set(:@jenkins_job, 'nnrtc-ios-build')
+    helper.instance_variable_set(:@jenkins_job, 'media-ios-build')
     helper.validate_jenkins_publish_context!
   ensure
     FileUtils.rm_rf(helper.project_directory) if helper&.project_directory
@@ -7360,7 +7360,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       end
     end.new
 
-    helper.job_name = 'nn'
+    helper.job_name = 'app'
     helper.definitions = [
       { 'name' => 'branch' },
       { 'name' => 'DEPLOY_TARGET' },
@@ -7386,7 +7386,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     assert_includes error.message, '支持 pgyer/tf/app'
 
     helper.remove_instance_variable(:@jenkins_publish_job_profile)
-    helper.job_name = 'nnrtc-ios-build'
+    helper.job_name = 'media-ios-build'
     helper.definitions = [{ 'name' => 'BRANCH' }]
     framework_profile = helper.jenkins_publish_job_profile
     assert_equal :framework, framework_profile[:kind]
@@ -7401,45 +7401,45 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
   end
 
   def test_local_overlay_uses_development_pods_directory
-    FileUtils.mkdir_p(File.join(@project_dir, 'Development Pods', 'NNLibrary'))
+    FileUtils.mkdir_p(File.join(@project_dir, 'Development Pods', 'AppLibrary'))
     Dir.chdir(@project_dir) do
       `git init -q`
       `git checkout -b develop >/dev/null 2>&1`
     end
-    Dir.chdir(File.join(@project_dir, 'Development Pods', 'NNLibrary')) do
+    Dir.chdir(File.join(@project_dir, 'Development Pods', 'AppLibrary')) do
       `git init -q`
       `git checkout -b develop >/dev/null 2>&1`
     end
-    File.write(File.join(@project_dir, 'Podfile.overlay'), "pod 'NNLibrary'\n")
+    File.write(File.join(@project_dir, 'Podfile.overlay'), "pod 'AppLibrary'\n")
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
 
-    options = CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+    options = CocoapodsPodx::Runtime.pod_options_for(name: 'AppLibrary')
 
-    assert_equal './Development Pods/NNLibrary', options[:path]
+    assert_equal './Development Pods/AppLibrary', options[:path]
   end
 
   def test_local_overlay_branch_mismatch_is_printed_in_install_table
-    FileUtils.mkdir_p(File.join(@project_dir, 'Development Pods', 'NNLibrary'))
+    FileUtils.mkdir_p(File.join(@project_dir, 'Development Pods', 'AppLibrary'))
     Dir.chdir(@project_dir) do
       `git init -q`
       `git checkout -b develop >/dev/null 2>&1`
     end
-    Dir.chdir(File.join(@project_dir, 'Development Pods', 'NNLibrary')) do
+    Dir.chdir(File.join(@project_dir, 'Development Pods', 'AppLibrary')) do
       `git init -q`
       `git checkout -b release/5.14.5 >/dev/null 2>&1`
     end
-    File.write(File.join(@project_dir, 'Podfile.overlay'), "pod 'NNLibrary'\n")
+    File.write(File.join(@project_dir, 'Podfile.overlay'), "pod 'AppLibrary'\n")
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
 
     output = nil
     error = nil
     output = capture_io do
       error = assert_raises(RuntimeError) do
-        CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+        CocoapodsPodx::Runtime.pod_options_for(name: 'AppLibrary')
       end
     end.first
 
-    assert_includes output, '| NNLibrary'
+    assert_includes output, '| AppLibrary'
     assert_includes output, '| 本地'
     assert_includes output, '| release/5.14.5'
     assert_includes output, '| 失败'
@@ -7448,7 +7448,7 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
 
   def test_local_overlay_clones_missing_development_pod_during_pod_install
     remote_base = File.join(@project_dir, 'remotes')
-    remote_repo = File.join(remote_base, 'nn_ios', 'nnyytext.git')
+    remote_repo = File.join(remote_base, 'app_ios', 'apptextkit.git')
     FileUtils.mkdir_p(remote_repo)
     Dir.chdir(remote_repo) do
       `git init -q`
@@ -7461,30 +7461,30 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
     end
 
     File.write(File.join(@project_dir, 'podx.config.yml'), <<~YAML)
-      target_name: nn_ios
-      private_source: #{remote_base}/nn_ios/specs.git
+      target_name: app_ios
+      private_source: #{remote_base}/app_ios/specs.git
       git_base_url: #{remote_base}
     YAML
     Dir.chdir(@project_dir) do
       `git init -q`
       `git checkout -b develop >/dev/null 2>&1`
     end
-    File.write(File.join(@project_dir, 'Podfile.overlay'), "pod 'NNLibrary'\n")
+    File.write(File.join(@project_dir, 'Podfile.overlay'), "pod 'AppLibrary'\n")
     CocoapodsPodx::Runtime.configure(project_directory: @project_dir)
 
-    options = CocoapodsPodx::Runtime.pod_options_for(name: 'NNLibrary')
+    options = CocoapodsPodx::Runtime.pod_options_for(name: 'AppLibrary')
 
-    assert_equal './Development Pods/NNLibrary', options[:path]
-    assert File.directory?(File.join(@project_dir, 'Development Pods', 'NNLibrary', '.git'))
+    assert_equal './Development Pods/AppLibrary', options[:path]
+    assert File.directory?(File.join(@project_dir, 'Development Pods', 'AppLibrary', '.git'))
   end
 
   def test_podx_clean_cleans_cache_and_removes_installed_pod
-    FileUtils.mkdir_p(File.join(@project_dir, 'Pods', 'NNRtc'))
-    File.write(File.join(@project_dir, 'Pods', 'NNRtc', 'README.md'), 'cached')
+    FileUtils.mkdir_p(File.join(@project_dir, 'Pods', 'AppRTC'))
+    File.write(File.join(@project_dir, 'Pods', 'AppRTC', 'README.md'), 'cached')
 
     command = Pod::Command::Podx.allocate
     command.instance_variable_set(:@project_directory, @project_dir)
-    command.instance_variable_set(:@pod_names, ['NNRtc'])
+    command.instance_variable_set(:@pod_names, ['AppRTC'])
     command.instance_variable_set(:@dry_run, false)
     cache_names = []
     command.define_singleton_method(:clean_pod_cache) do |name|
@@ -7498,10 +7498,10 @@ class CocoapodsPodxRuntimeTest < Minitest::Test
       command.send(:clean_pod_cache_and_installed_pods)
     end
 
-    assert_equal ['NNRtc'], cache_names
-    refute File.exist?(File.join(@project_dir, 'Pods', 'NNRtc'))
+    assert_equal ['AppRTC'], cache_names
+    refute File.exist?(File.join(@project_dir, 'Pods', 'AppRTC'))
     assert_includes output, '【podx clean 结果】'
-    assert_includes output, '| NNRtc | 已清理 | 已删除 NNRtc |'
+    assert_includes output, '| AppRTC | 已清理 | 已删除 AppRTC |'
     assert_includes output, 'clean [done] 1'
   ensure
     Pod::UI.define_singleton_method(:puts, original_puts) if original_puts

@@ -218,8 +218,8 @@ podx pipeline gate
 高阶意图命令适合日常使用，底层仍复用已有 `podx` / `mgit` 能力：
 
 ```bash
-podx workon NNBussCom            # 开始开发组件，等同 podx NNBussCom
-podx dev NNBussCom               # 同 podx workon
+podx workon AppFeatureKit            # 开始开发组件，等同 podx AppFeatureKit
+podx dev AppFeatureKit               # 同 podx workon
 podx check                       # 检查工程接入和本地组件状态，等同 podx doctor
 podx health                      # 同 podx check
 podx graph                       # 更新 AI 图谱并检查改动影响，等同 podx ai update
@@ -234,9 +234,9 @@ podx repair 1274                 # 半自动修复 Jenkins 打包失败，等同
 
 ```bash
 podx install --no-repo-update    # 执行 pod install，并处理 overlay 本地依赖
-podx update NNBussCom            # 更新指定 pod；命中 overlay 本地组件时先更新本地仓库
-podx NNBussCom                   # 切到本地源码
-podx disable NNBussCom           # 切回远端
+podx update AppFeatureKit            # 更新指定 pod；命中 overlay 本地组件时先更新本地仓库
+podx AppFeatureKit                   # 切到本地源码
+podx disable AppFeatureKit           # 切回远端
 podx disable                     # 全部切回远端
 podx doctor                      # 检查工程配置和本地组件状态
 podx rules                       # 查看当前工程规则器规则
@@ -320,8 +320,8 @@ mgit push                        # 多仓库推送
 mgit add                         # 多仓库 git add -A
 mgit commit -m "message"         # 多仓库提交
 mgit commit -m "message" -edit Podfile # 显式允许提交受保护文件
-mgit checkout NNBussCom develop  # 切换指定组件分支
-mgit stash NNBussCom             # stash 指定组件仓库
+mgit checkout AppFeatureKit develop  # 切换指定组件分支
+mgit stash AppFeatureKit             # stash 指定组件仓库
 mgit publish release/x.y.z       # 创建或更新多仓库发布分支
 ```
 
@@ -360,7 +360,7 @@ podx doctor
 切换组件到本地源码开发：
 
 ```bash
-podx workon NNBussCom
+podx workon AppFeatureKit
 podx install
 podx open
 ```

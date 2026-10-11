@@ -57,7 +57,7 @@ const tools = [
     inputSchema: podCommandSchema({
       pods: {
         type: "array",
-        description: "可选 pod 名列表，例如 NNBussCom、RxSwift。",
+        description: "可选 pod 名列表，例如 AppFeatureKit、RxSwift。",
         items: { type: "string" }
       }
     })
@@ -109,7 +109,7 @@ function projectSchema(extraProperties = {}, required = []) {
       },
       productLine: {
         type: "string",
-        description: "可选产品线 ID，例如 nn、nnrtc；等同命令行 --line。"
+        description: "可选产品线 ID，例如 app、media；等同命令行 --line。"
       },
       ...extraProperties
     },
@@ -136,7 +136,7 @@ function reposSchema(extraProperties = {}, required = []) {
   return projectSchema({
     repos: {
       type: "array",
-      description: "可选仓库名列表，例如 NNBussCom、NNLibrary。",
+      description: "可选仓库名列表，例如 AppFeatureKit、AppLibrary。",
       items: { type: "string" }
     },
     maxOutput: {

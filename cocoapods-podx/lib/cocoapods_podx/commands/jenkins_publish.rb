@@ -519,7 +519,7 @@ module CocoapodsPodx
         return if File.exist?(podfile_path)
         return if non_podfile_publish_job_configured?
 
-        raise Pod::Informative, '非 Podfile 工程查看 Jenkins 日志时必须指定 job，例如：podx publish log --job nnrtc-ios-build'
+        raise Pod::Informative, '非 Podfile 工程查看 Jenkins 日志时必须指定 job，例如：podx publish log --job media-ios-build'
       end
 
       def normalize_jenkins_log_build(build)
@@ -627,7 +627,7 @@ module CocoapodsPodx
           ])
         end
 
-        if text.match?(/Failed to connect|Could not resolve host|Connection timed out|Operation timed out|git\.leigod\.top|github\.com/i)
+        if text.match?(/Failed to connect|Could not resolve host|Connection timed out|Operation timed out|gitlab|github\.com/i)
           return failure_report('网络或 Git 服务', first_reason(evidence, 'Jenkins 无法访问 Git、Specs 或第三方下载源。'), evidence, [
             '检查 Jenkins 节点网络、DNS、代理和 Git 服务可用性。',
             '如果依赖来自 GitHub，优先切到内部镜像或内部二进制依赖。'
@@ -880,7 +880,7 @@ module CocoapodsPodx
 
         return if non_podfile_publish_job_configured?
 
-        raise Pod::Informative, '非 Podfile 工程执行 podx publish 时必须指定 Jenkins job，例如：podx publish --job nnrtc-ios-build'
+        raise Pod::Informative, '非 Podfile 工程执行 podx publish 时必须指定 Jenkins job，例如：podx publish --job media-ios-build'
       end
 
       def non_podfile_publish_job_configured?
@@ -1051,7 +1051,7 @@ module CocoapodsPodx
         end
 
         configured = jenkins_project_config[:jenkins_job].to_s.strip
-        configured.empty? ? 'nn' : configured
+        configured.empty? ? 'app' : configured
       end
 
       def jenkins_parameter_definitions
@@ -1348,16 +1348,16 @@ module CocoapodsPodx
         return items.map { |item| item[:name] } unless items.empty?
 
         %w[
-          NNBussCom
-          NNApperance
-          NNLibrary
-          NNGeneral
-          NNCategory
-          NNLogModule
-          NNNetWork
-          NNRealReachability
-          NNBasciCommon
-          NNIMManager
+          AppFeatureKit
+          AppAppearance
+          AppLibrary
+          AppGeneral
+          AppCategory
+          AppLogModule
+          AppNetwork
+          AppReachability
+          AppBaseKit
+          AppIMManager
         ]
       end
 
@@ -1677,7 +1677,7 @@ module CocoapodsPodx
         end
 
         base_url = jenkins_project_config[:jenkins_base_url].to_s.strip
-        base_url = 'http://10.1.2.175:8080' if base_url.empty?
+        base_url = 'https://jenkins.example.com' if base_url.empty?
         normalize_jenkins_job_url("#{base_url.sub(%r{/+\z}, '')}/job/#{normalized_job}/")
       end
 

@@ -119,7 +119,7 @@ module PodxSetup
     end
 
     def remote_git_url(raw_name:, group_name:, custom_git_target:)
-      if group_name == 'nn_ios' || group_name == target_name
+      if group_name == 'app_ios' || group_name == target_name
         "#{git_base_url}/#{group_name}/#{raw_name.downcase}.git"
       elsif custom_git_target.nil?
         "#{git_base_url}/#{target_name}/#{group_name.downcase}.git"
